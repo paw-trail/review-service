@@ -890,7 +890,7 @@ after    db/migration/service/V20__place.sql
 
 ---
 
-**`V20__template.sql` 을 반드시 지웁니다.**
+**`V20__review.sql` 을 반드시 지웁니다.**
 
 새 파일만 만들고 옛 파일을 남기면 같은 번호가 둘이 되어 기동이 실패합니다.
 
@@ -3714,7 +3714,7 @@ docker compose exec postgres psql -U pawtrail -c "CREATE DATABASE place_db OWNER
 Found more than one migration with version 20
 ```
 
-`V20__template.sql` 을 지우지 않고 `V20__place.sql` 을 새로 만든 경우입니다.
+`V20__review.sql` 을 지우지 않고 `V20__place.sql` 을 새로 만든 경우입니다.
 [1-4-5](#1-4-5-dbmigrationservicev20__sql) 를 참고합니다.
 
 **③ 엔티티와 스키마가 어긋났을 때**
