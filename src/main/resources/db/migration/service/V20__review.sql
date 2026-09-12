@@ -53,5 +53,33 @@ CREATE TABLE review_like
   account_id uuid      NOT NULL,
   created_at timestamp NOT NULL,
 
-  PRIMARY KEY (review_id, account_id)
+  PRIMARY KEY (review_id, account_id),
+
+  CONSTRAINT fk_review_like_review
+    FOREIGN KEY (review_id) REFERENCES place_review(id)
 );
+
+CREATE FUNCTION sync_review_like_count()
+RETURNS trigger AS
+$$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE place_review
+    SET like_count = like_count + 1
+    WHERE id = NEW.review_id;
+
+    RETURN NEW;
+  END IF;
+
+  UPDATE place_review
+  SET like_count = like_count - 1
+  WHERE id = OLD.review_id;
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_sync_review_like_count
+AFTER INSERT OR DELETE ON review_like
+FOR EACH ROW
+EXECUTE FUNCTION sync_review_like_count();
