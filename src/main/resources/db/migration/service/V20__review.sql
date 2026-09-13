@@ -15,7 +15,7 @@ CREATE TABLE place_review
   content               varchar(1000) NOT NULL,
   photos                text[]        NOT NULL,
   tags                  text[]        NOT NULL,
-  like_count             integer       NOT NULL,
+  like_count             integer       NOT NULL DEFAULT 0,
 
   pet_breed_at_visit    varchar(40),
   pet_weight_at_visit   numeric(4,1),
@@ -56,7 +56,7 @@ CREATE TABLE review_like
   PRIMARY KEY (review_id, account_id),
 
   CONSTRAINT fk_review_like_review
-    FOREIGN KEY (review_id) REFERENCES place_review(id)
+    FOREIGN KEY (review_id) REFERENCES place_review(id) ON DELETE CASCADE
 );
 
 CREATE FUNCTION sync_review_like_count()

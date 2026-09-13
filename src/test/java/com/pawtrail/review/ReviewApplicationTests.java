@@ -1,43 +1,40 @@
 package com.pawtrail.review;
 
+import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.model.ReviewLike;
+import com.pawtrail.review.domain.provider.UserProvider;
+import com.pawtrail.review.domain.provider.dto.UserSummary;
+import com.pawtrail.review.domain.repository.PlaceReviewRepository;
+import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
+import com.pawtrail.review.infrastructure.persistence.jpa.ReviewLikeJpaRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-// 애플리케이션 컨텍스트가 뜨는지만 확인하는 검사임
-// 본문이 비어 있어도 @SpringBootTest 가 앱을 통째로 한 번 띄워보므로
-// 빈 배선이 깨졌거나 자동 설정이 안 켜졌으면 여기서 드러남
-//
-// * 데이터베이스를 컨테이너로 직접 띄우는 이유
-//   DataSource 주소는 설정 서버에서 내려오는데 spring.config.import 가 optional 이라
-//   설정 서버가 없어도 조용히 넘어간 뒤 DataSource 를 만들다 실패함
-//   설정 서버가 떠 있는지에 따라 결과가 갈리면 검사로서 의미가 없으므로
-//   외부에 의존하지 않도록 테스트가 스스로 준비함
-//
-// * infra 레포의 db 프로파일과는 무관함
-//   그쪽은 compose 가, 이쪽은 이 코드가 띄우며 서로를 쓰지 않음
-//   db 프로파일을 켜 두어도 이 검사는 자기 컨테이너를 새로 만듦
-//
-// * 이미지를 postgres:17-alpine 으로 둔 이유
-//   arm64 를 지원해 Apple Silicon 에서 에뮬레이션 없이 돎
-//   좌표 타입이 필요한 서비스(search, route, place)는 postgis/postgis:17-3.5 로 바꿀 것
-//   그 이미지는 amd64 전용이라 Apple Silicon 에서는 Rosetta 가 필요함
-//
-// * 컨테이너를 @Bean 이 아니라 정적 필드로 두는 이유
-//   @Bean 메서드로 정의하면 인스턴스가 충분히 이른 시점에 준비되지 않아
-//   @ServiceConnection 에 name 을 따로 지정해야 함(Spring Boot 4 공식 문서)
-//   정적 필드는 그 문제가 없음
-//
-// * import 가 org.testcontainers.postgresql 인 것에 주의할 것
-//   Testcontainers 2 부터 대부분의 컨테이너 클래스에서 제네릭이 사라졌고
-//   제네릭이 붙은 옛 클래스는 org.testcontainers.containers 에 하위 호환용으로 남아 deprecated 임
-//   인터넷 예제 대부분이 1.x 기준이라 옛 패키지를 쓰며, 그대로 가져오면
-//   컴파일은 통과하되 deprecated 경고가 남음
-//   PostgreSQLContainer 뒤에 <?> 가 붙어 있으면 옛 클래스를 쓰고 있다는 뜻임
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.IntStream;
+
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 @SpringBootTest
+@AutoConfigureMockMvc
 @Testcontainers
 class ReviewApplicationTests {
 
@@ -47,8 +44,188 @@ class ReviewApplicationTests {
     @ServiceConnection
     static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine");
 
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private PlaceReviewJpaRepository placeReviewJpaRepository;
+
+    @Autowired
+    private PlaceReviewRepository placeReviewRepository;
+
+    @Autowired
+    private ReviewLikeJpaRepository reviewLikeJpaRepository;
+
+    @MockitoBean
+    private UserProvider userProvider;
+
+    @BeforeEach
+    void cleanDatabase() {
+        reviewLikeJpaRepository.deleteAll();
+        placeReviewJpaRepository.deleteAll();
+    }
+
     @Test
     void contextLoads() {
+    }
+
+    @Test
+    void rejectsReviewPageSizeOverTwoHundred() throws Exception {
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "201"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void returnsNextHundredReviewsForLoadMore() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        List<PlaceReview> reviews = IntStream.rangeClosed(1, 101)
+            .mapToObj(number -> PlaceReview.create(
+                placeId,
+                authorId,
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5,
+                (short) 4,
+                (short) 5,
+                (short) 4,
+                "페이지네이션 테스트 리뷰 " + number,
+                List.of(),
+                List.of(),
+                "골든리트리버",
+                new BigDecimal("28.5"),
+                "LARGE"
+            ))
+            .toList();
+        placeReviewJpaRepository.saveAllAndFlush(reviews);
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "100"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(100))
+            .andExpect(jsonPath("$.data.page.number").value(0))
+            .andExpect(jsonPath("$.data.page.totalElements").value(101))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "1")
+                .queryParam("size", "100"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.page.number").value(1))
+            .andExpect(jsonPath("$.data.page.totalElements").value(101))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+    }
+
+    @Test
+    void returnsSeededReviewFromApi() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            placeId,
+            authorId,
+            petId,
+            LocalDate.of(2026, 9, 10),
+            (short) 5,
+            (short) 4,
+            (short) 5,
+            (short) 4,
+            "산책로가 넓고 반려견과 함께 쉬기 좋았어요.",
+            List.of("https://example.com/review-photo.jpg"),
+            List.of("산책", "주차가능"),
+            "골든리트리버",
+            new BigDecimal("28.5"),
+            "LARGE"
+        ));
+        ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
+            ReviewLike.create(review.getId(), viewerId)
+        );
+
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of(
+            authorId,
+            new UserSummary(authorId, "테스트 작성자", "https://example.com/profile.jpg")
+        ));
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "10"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.content[0].reviewId").value(review.getId().toString()))
+            .andExpect(jsonPath("$.data.content[0].rating").value(5))
+            .andExpect(jsonPath("$.data.content[0].content")
+                .value("산책로가 넓고 반려견과 함께 쉬기 좋았어요."))
+            .andExpect(jsonPath("$.data.content[0].likeCount").value(1))
+            .andExpect(jsonPath("$.data.content[0].likedByMe").value(true))
+            .andExpect(jsonPath("$.data.content[0].isMine").value(false))
+            .andExpect(jsonPath("$.data.content[0].canDelete").value(false))
+            .andExpect(jsonPath("$.data.content[0].author.nickname").value("테스트 작성자"))
+            .andExpect(jsonPath("$.data.content[0].petSummary.breedName").value("골든리트리버"))
+            .andExpect(jsonPath("$.data.page.number").value(0))
+            .andExpect(jsonPath("$.data.page.totalElements").value(1));
+
+        reviewLikeJpaRepository.deleteById(reviewLike.getId());
+        reviewLikeJpaRepository.flush();
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "10"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.content[0].reviewId").value(review.getId().toString()))
+            .andExpect(jsonPath("$.data.content[0].likeCount").value(0))
+            .andExpect(jsonPath("$.data.content[0].likedByMe").value(false));
+    }
+
+    @Test
+    void deletingReviewCascadesReviewLikes() {
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            LocalDate.of(2026, 9, 10),
+            (short) 5,
+            (short) 4,
+            (short) 5,
+            (short) 4,
+            "삭제 cascade 검증용 리뷰입니다.",
+            List.of(),
+            List.of(),
+            "골든리트리버",
+            new BigDecimal("28.5"),
+            "LARGE"
+        ));
+        ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
+            ReviewLike.create(review.getId(), UUID.randomUUID())
+        );
+
+        placeReviewRepository.hardDeleteAll(List.of(review));
+        placeReviewJpaRepository.flush();
+
+        assertThat(placeReviewJpaRepository.existsById(review.getId())).isFalse();
+        assertThat(reviewLikeJpaRepository.existsById(reviewLike.getId())).isFalse();
     }
 
 }
