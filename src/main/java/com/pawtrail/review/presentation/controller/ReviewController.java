@@ -7,6 +7,7 @@ import com.pawtrail.common.security.annotation.CurrentUser;
 import com.pawtrail.common.security.principal.CustomUserPrincipal;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
 import com.pawtrail.review.application.service.ReviewService;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ public class ReviewController {
         @PathVariable UUID placeId,
         @CurrentUser CustomUserPrincipal principal,
         @RequestParam(defaultValue = "0") @PositiveOrZero int page,
-        @RequestParam(defaultValue = "10") @Positive int size
+        @RequestParam(defaultValue = "10") @Positive @Max(200) int size
     ) {
         return CommonApiResponse.success(reviewService.findByPlace(
             principal.accountId(),

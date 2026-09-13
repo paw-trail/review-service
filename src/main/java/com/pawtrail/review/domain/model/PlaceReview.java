@@ -181,7 +181,7 @@ public class PlaceReview extends BaseEntity {
     }
 
     private static void validateContent(String content) {
-        if (content == null || content.isBlank() || content.length() > MAX_CONTENT_LENGTH) {
+        if (content == null || content.isBlank() || content.codePointCount(0, content.length()) > MAX_CONTENT_LENGTH) {
             throw new CustomException(ReviewErrorCode.INVALID_REVIEW_CONTENT);
         }
     }

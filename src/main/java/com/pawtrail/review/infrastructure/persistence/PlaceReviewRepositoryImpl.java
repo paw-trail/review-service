@@ -47,7 +47,7 @@ public class PlaceReviewRepositoryImpl implements PlaceReviewRepository {
         PageRequest pageRequest = PageRequest.of(
             page,
             size,
-            Sort.by(Sort.Direction.DESC, "createdAt")
+            Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))
         );
         Page<PlaceReview> result = jpaRepository.findByPlaceIdAndDeletedAtIsNull(
             placeId,
