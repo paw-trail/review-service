@@ -36,9 +36,12 @@ public class UserProviderImpl implements UserProvider {
             return Map.of();
         }
 
-        String ids = accountIds.stream()
+        List<UUID> distinctAccountIds = accountIds.stream()
             .distinct()
             .sorted()
+            .toList();
+
+        String ids = distinctAccountIds.stream()
             .map(UUID::toString)
             .collect(Collectors.joining(","));
 

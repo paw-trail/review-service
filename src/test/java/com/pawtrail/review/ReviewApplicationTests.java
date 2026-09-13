@@ -4,6 +4,7 @@ import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.model.ReviewLike;
 import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
+import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.ReviewLikeJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,9 +24,11 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -48,6 +51,9 @@ class ReviewApplicationTests {
     private PlaceReviewJpaRepository placeReviewJpaRepository;
 
     @Autowired
+    private PlaceReviewRepository placeReviewRepository;
+
+    @Autowired
     private ReviewLikeJpaRepository reviewLikeJpaRepository;
 
     @MockitoBean
@@ -61,6 +67,67 @@ class ReviewApplicationTests {
 
     @Test
     void contextLoads() {
+    }
+
+    @Test
+    void rejectsReviewPageSizeOverTwoHundred() throws Exception {
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "201"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void returnsNextHundredReviewsForLoadMore() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        List<PlaceReview> reviews = IntStream.rangeClosed(1, 101)
+            .mapToObj(number -> PlaceReview.create(
+                placeId,
+                authorId,
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5,
+                (short) 4,
+                (short) 5,
+                (short) 4,
+                "페이지네이션 테스트 리뷰 " + number,
+                List.of(),
+                List.of(),
+                "골든리트리버",
+                new BigDecimal("28.5"),
+                "LARGE"
+            ))
+            .toList();
+        placeReviewJpaRepository.saveAllAndFlush(reviews);
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "100"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(100))
+            .andExpect(jsonPath("$.data.page.number").value(0))
+            .andExpect(jsonPath("$.data.page.totalElements").value(101))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "1")
+                .queryParam("size", "100"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.page.number").value(1))
+            .andExpect(jsonPath("$.data.page.totalElements").value(101))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
     }
 
     @Test
@@ -130,6 +197,35 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.data.content[0].reviewId").value(review.getId().toString()))
             .andExpect(jsonPath("$.data.content[0].likeCount").value(0))
             .andExpect(jsonPath("$.data.content[0].likedByMe").value(false));
+    }
+
+    @Test
+    void deletingReviewCascadesReviewLikes() {
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            LocalDate.of(2026, 9, 10),
+            (short) 5,
+            (short) 4,
+            (short) 5,
+            (short) 4,
+            "삭제 cascade 검증용 리뷰입니다.",
+            List.of(),
+            List.of(),
+            "골든리트리버",
+            new BigDecimal("28.5"),
+            "LARGE"
+        ));
+        ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
+            ReviewLike.create(review.getId(), UUID.randomUUID())
+        );
+
+        placeReviewRepository.hardDeleteAll(List.of(review));
+        placeReviewJpaRepository.flush();
+
+        assertThat(placeReviewJpaRepository.existsById(review.getId())).isFalse();
+        assertThat(reviewLikeJpaRepository.existsById(reviewLike.getId())).isFalse();
     }
 
 }

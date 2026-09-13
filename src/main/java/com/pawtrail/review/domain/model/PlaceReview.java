@@ -69,7 +69,7 @@ public class PlaceReview extends BaseEntity {
     @Column(nullable = false, columnDefinition = "text[]")
     private String[] tags = new String[0];
 
-    @Column(name = "like_count", nullable = false)
+    @Column(name = "like_count", nullable = false, insertable = false, updatable = false)
     private int likeCount;
 
     @Column(name = "pet_breed_at_visit", length = 40)
@@ -147,16 +147,6 @@ public class PlaceReview extends BaseEntity {
         }
         if (tags != null) {
             this.tags = toArray(tags);
-        }
-    }
-
-    public void increaseLike() {
-        this.likeCount++;
-    }
-
-    public void decreaseLike() {
-        if (this.likeCount > 0) {
-            this.likeCount--;
         }
     }
 
