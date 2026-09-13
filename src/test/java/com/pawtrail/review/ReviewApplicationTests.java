@@ -86,7 +86,9 @@ class ReviewApplicationTests {
             new BigDecimal("28.5"),
             "LARGE"
         ));
-        reviewLikeJpaRepository.saveAndFlush(ReviewLike.create(review.getId(), viewerId));
+        ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
+            ReviewLike.create(review.getId(), viewerId)
+        );
 
         when(userProvider.getUsers(anyCollection())).thenReturn(Map.of(
             authorId,
@@ -113,6 +115,21 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.data.content[0].petSummary.breedName").value("골든리트리버"))
             .andExpect(jsonPath("$.data.page.number").value(0))
             .andExpect(jsonPath("$.data.page.totalElements").value(1));
+
+        reviewLikeJpaRepository.deleteById(reviewLike.getId());
+        reviewLikeJpaRepository.flush();
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0")
+                .queryParam("size", "10"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.content[0].reviewId").value(review.getId().toString()))
+            .andExpect(jsonPath("$.data.content[0].likeCount").value(0))
+            .andExpect(jsonPath("$.data.content[0].likedByMe").value(false));
     }
 
 }
