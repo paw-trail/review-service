@@ -21,7 +21,12 @@ public interface PlaceReviewRepository {
 
     ReviewPage<PlaceReview> findActiveByPlaceId(UUID placeId, int page, int size);
 
-    List<PlaceReview> findActiveByAccountId(UUID accountId, ReviewSort sort);
+    ReviewPage<PlaceReview> findActiveByAccountId(
+        UUID accountId,
+        ReviewSort sort,
+        int page,
+        int size
+    );
 
     List<PlaceReview> findAllByAccountIdForUpdate(UUID accountId);
 

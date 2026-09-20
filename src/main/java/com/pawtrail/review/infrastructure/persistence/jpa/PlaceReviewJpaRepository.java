@@ -21,7 +21,7 @@ public interface PlaceReviewJpaRepository extends JpaRepository<PlaceReview, UUI
 
     Page<PlaceReview> findByPlaceIdAndDeletedAtIsNull(UUID placeId, Pageable pageable);
 
-    List<PlaceReview> findByAccountIdAndDeletedAtIsNull(UUID accountId, org.springframework.data.domain.Sort sort);
+    Page<PlaceReview> findByAccountIdAndDeletedAtIsNull(UUID accountId, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select review from PlaceReview review "
