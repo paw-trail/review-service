@@ -7,6 +7,7 @@ import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
+import com.pawtrail.review.infrastructure.config.ReviewProperties;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.ReviewLikeJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +59,9 @@ class ReviewApplicationTests {
 
     @Autowired
     private ReviewLikeJpaRepository reviewLikeJpaRepository;
+
+    @Autowired
+    private ReviewProperties reviewProperties;
 
     @MockitoBean
     private UserProvider userProvider;
@@ -190,6 +194,29 @@ class ReviewApplicationTests {
                 .header("X-User-Role", "USER")
                 .queryParam("size", "201"))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void returnsConfiguredReviewTags() throws Exception {
+        List<String> expectedTags = List.of(
+            "음수대 제공완료",
+            "반려견 방석 완비",
+            "반려견 놀이터 추천",
+            "야외석 넓음",
+            "주차 편함"
+        );
+
+        assertThat(reviewProperties.tags()).containsExactlyElementsOf(expectedTags);
+
+        mockMvc.perform(get("/api/v1/reviews/tags"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.length()").value(expectedTags.size()))
+            .andExpect(jsonPath("$.data[0]").value(expectedTags.get(0)))
+            .andExpect(jsonPath("$.data[1]").value(expectedTags.get(1)))
+            .andExpect(jsonPath("$.data[2]").value(expectedTags.get(2)))
+            .andExpect(jsonPath("$.data[3]").value(expectedTags.get(3)))
+            .andExpect(jsonPath("$.data[4]").value(expectedTags.get(4)));
     }
 
     @Test

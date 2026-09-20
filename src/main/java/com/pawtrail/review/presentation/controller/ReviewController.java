@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -56,4 +57,9 @@ public class ReviewController {
         ));
     }
 
+
+    @GetMapping("/reviews/tags")
+    public CommonApiResponse<List<String>> findTags() {
+        return CommonApiResponse.success(reviewService.findTags());
+    }
 }
