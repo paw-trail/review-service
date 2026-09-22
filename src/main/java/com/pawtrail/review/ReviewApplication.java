@@ -1,6 +1,7 @@
 package com.pawtrail.review;
 
 import com.pawtrail.review.infrastructure.config.ReviewProperties;
+import com.pawtrail.review.infrastructure.config.StorageProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -34,7 +35,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @SpringBootApplication
 @EntityScan(basePackages = {"com.pawtrail.review", "com.pawtrail.common"})
 @EnableJpaRepositories(basePackages = {"com.pawtrail.review", "com.pawtrail.common"})
-@EnableConfigurationProperties(ReviewProperties.class)
+@EnableConfigurationProperties({ReviewProperties.class, StorageProperties.class})
 public class ReviewApplication {
 
     public static void main(String[] args) {

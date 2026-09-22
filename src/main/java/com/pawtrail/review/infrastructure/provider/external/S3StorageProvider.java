@@ -8,18 +8,15 @@ import com.pawtrail.review.infrastructure.config.StorageProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetUrlRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
-import java.net.URI;
-import java.net.URL;
 import java.time.Duration;
-import java.util.Collection;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -31,7 +28,6 @@ public class S3StorageProvider implements StorageProvider {
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of("image/jpeg", "image/png");
     private static final String REVIEW_PREFIX = "reviews/";
 
-    private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final StorageProperties properties;
 
@@ -50,11 +46,21 @@ public class S3StorageProvider implements StorageProvider {
                 .signatureDuration(Duration.ofSeconds(properties.uploadExpiresSeconds()))
                 .putObjectRequest(putObjectRequest)
                 .build();
-            PresignedPutObjectRequest signed = s3Presigner.presignPutObject(presignRequest);
+            PresignedPutObjectRequest signedPut = s3Presigner.presignPutObject(presignRequest);
+
+            GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(key)
+                .build();
+            GetObjectPresignRequest getPresignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(Duration.ofSeconds(properties.uploadExpiresSeconds()))
+                .getObjectRequest(getObjectRequest)
+                .build();
+            PresignedGetObjectRequest signedGet = s3Presigner.presignGetObject(getPresignRequest);
 
             return new UploadTarget(
-                signed.url().toExternalForm(),
-                objectUrl(key).toExternalForm(),
+                signedPut.url().toExternalForm(),
+                signedGet.url().toExternalForm(),
                 properties.uploadExpiresSeconds()
             );
         } catch (SdkException exception) {
@@ -84,45 +90,6 @@ public class S3StorageProvider implements StorageProvider {
             throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
         }
         return safe;
-    }
-
-    private String extractOwnedKey(UUID accountId, String fileUrl) {
-        try {
-            URI actual = URI.create(fileUrl);
-            URI expected = objectUrl("validation-key").toURI();
-            if (!"https".equalsIgnoreCase(actual.getScheme())
-                || !expected.getHost().equalsIgnoreCase(actual.getHost())) {
-                throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
-            }
-
-            String expectedSuffix = "validation-key";
-            String expectedPathPrefix = expected.getRawPath().substring(
-                0,
-                expected.getRawPath().length() - expectedSuffix.length()
-            );
-            if (!actual.getRawPath().startsWith(expectedPathPrefix)) {
-                throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
-            }
-
-            String key = actual.getRawPath().substring(expectedPathPrefix.length());
-            if (!key.startsWith(reviewPrefix(accountId))) {
-                throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
-            }
-            return key;
-        } catch (IllegalArgumentException exception) {
-            throw new CustomException(CommonErrorCode.VALIDATION_FAILED, exception);
-        } catch (CustomException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new CustomException(CommonErrorCode.VALIDATION_FAILED, exception);
-        }
-    }
-
-    private URL objectUrl(String key) {
-        return s3Client.utilities().getUrl(GetUrlRequest.builder()
-            .bucket(properties.bucket())
-            .key(key)
-            .build());
     }
 
     private String reviewPrefix(UUID accountId) {
