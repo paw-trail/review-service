@@ -7,7 +7,10 @@ import com.pawtrail.common.security.annotation.CurrentUser;
 import com.pawtrail.common.security.principal.CustomUserPrincipal;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
+import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.application.service.ReviewService;
+import com.pawtrail.review.presentation.request.UploadUrlRequest;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -62,4 +65,17 @@ public class ReviewController {
     public CommonApiResponse<List<String>> findTags() {
         return CommonApiResponse.success(reviewService.findTags());
     }
+
+    @PostMapping("/reviews/upload-url")
+    public CommonApiResponse<UploadUrlOutput> createUploadUrl(
+        @CurrentUser CustomUserPrincipal principal,
+        @Valid @RequestBody UploadUrlRequest request
+    ) {
+        return CommonApiResponse.success(reviewService.createUploadUrl(
+            principal.accountId(),
+            request.fileName(),
+            request.contentType()
+        ));
+    }
+
 }
