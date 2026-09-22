@@ -7,9 +7,11 @@ import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
 import com.pawtrail.review.domain.enums.ReviewSort;
+import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
+import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
@@ -36,6 +38,7 @@ public class ReviewService {
     private final UserProvider userProvider;
     private final ReviewTagProvider reviewTagProvider;
 
+    private final StorageProvider storageProvider;
     private final PlaceProvider placeProvider;
 
     public PageResponse<ReviewDetailOutput> findByPlace(
@@ -86,6 +89,13 @@ public class ReviewService {
             )
         );
     }
+
+    public UploadUrlOutput createUploadUrl(UUID accountId, String fileName, String contentType) {
+        return UploadUrlOutput.from(
+            storageProvider.createReviewUpload(accountId, fileName, contentType)
+        );
+    }
+
 
     public PageResponse<MyReviewOutput> findMine(
         UUID accountId,
