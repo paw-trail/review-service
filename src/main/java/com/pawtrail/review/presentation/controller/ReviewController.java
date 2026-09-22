@@ -5,6 +5,7 @@ import com.pawtrail.common.response.CommonApiResponse;
 import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.common.security.annotation.CurrentUser;
 import com.pawtrail.common.security.principal.CustomUserPrincipal;
+import com.pawtrail.review.application.dto.output.MyReviewOutput;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
 import com.pawtrail.review.application.service.ReviewService;
 import jakarta.validation.constraints.Max;
@@ -39,4 +40,20 @@ public class ReviewController {
             size
         ));
     }
+
+    @GetMapping("/reviews/me")
+    public CommonApiResponse<PageResponse<MyReviewOutput>> findMine(
+        @CurrentUser CustomUserPrincipal principal,
+        @RequestParam(defaultValue = "recent") String sort,
+        @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+        @RequestParam(defaultValue = "200") @Positive @Max(200) int size
+    ) {
+        return CommonApiResponse.success(reviewService.findMine(
+            principal.accountId(),
+            sort,
+            page,
+            size
+        ));
+    }
+
 }

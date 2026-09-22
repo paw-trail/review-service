@@ -2,7 +2,9 @@ package com.pawtrail.review;
 
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.model.ReviewLike;
+import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
+import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
@@ -27,6 +29,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -59,6 +62,9 @@ class ReviewApplicationTests {
     @MockitoBean
     private UserProvider userProvider;
 
+    @MockitoBean
+    private PlaceProvider placeProvider;
+
     @BeforeEach
     void cleanDatabase() {
         reviewLikeJpaRepository.deleteAll();
@@ -67,6 +73,123 @@ class ReviewApplicationTests {
 
     @Test
     void contextLoads() {
+    }
+
+    @Test
+    void returnsEmptyPageWhenCurrentUserHasNoReviews() throws Exception {
+        mockMvc.perform(get("/api/v1/reviews/me")
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.content.length()").value(0))
+            .andExpect(jsonPath("$.data.page.number").value(0))
+            .andExpect(jsonPath("$.data.page.size").value(200))
+            .andExpect(jsonPath("$.data.page.totalElements").value(0))
+            .andExpect(jsonPath("$.data.page.totalPages").value(0));
+
+        verifyNoInteractions(placeProvider);
+    }
+
+    @Test
+    void returnsMineTwoHundredAtATime() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID placeId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        List<PlaceReview> reviews = IntStream.rangeClosed(1, 201)
+            .mapToObj(number -> PlaceReview.create(
+                placeId,
+                accountId,
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5,
+                (short) 4,
+                (short) 5,
+                (short) 4,
+                "내 리뷰 페이징 테스트 " + number,
+                List.of(),
+                List.of(),
+                "골든리트리버",
+                new BigDecimal("28.5"),
+                "LARGE"
+            ))
+            .toList();
+        placeReviewJpaRepository.saveAllAndFlush(reviews);
+        when(placeProvider.getPlaces(anyCollection())).thenReturn(Map.of(
+            placeId,
+            new PlaceSummary(placeId, "테스트 장소")
+        ));
+
+        mockMvc.perform(get("/api/v1/reviews/me")
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "0"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(200))
+            .andExpect(jsonPath("$.data.content[0].placeName").value("테스트 장소"))
+            .andExpect(jsonPath("$.data.page.number").value(0))
+            .andExpect(jsonPath("$.data.page.size").value(200))
+            .andExpect(jsonPath("$.data.page.totalElements").value(201))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+
+        mockMvc.perform(get("/api/v1/reviews/me")
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .queryParam("page", "1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(1))
+            .andExpect(jsonPath("$.data.page.number").value(1))
+            .andExpect(jsonPath("$.data.page.totalElements").value(201))
+            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+    }
+
+    @Test
+    void usesReviewIdAsFinalRecentSortCondition() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID placeId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+        LocalDate visitedAt = LocalDate.of(2026, 9, 10);
+
+        List<PlaceReview> reviews = placeReviewJpaRepository.saveAllAndFlush(List.of(
+            PlaceReview.create(
+                placeId, accountId, petId, visitedAt,
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "첫 번째 리뷰", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            PlaceReview.create(
+                placeId, accountId, petId, visitedAt,
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "두 번째 리뷰", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            )
+        ));
+        UUID expectedFirstId = reviews.stream()
+            .map(PlaceReview::getId)
+            .max(UUID::compareTo)
+            .orElseThrow();
+        when(placeProvider.getPlaces(anyCollection())).thenReturn(Map.of(
+            placeId,
+            new PlaceSummary(placeId, "테스트 장소")
+        ));
+
+        mockMvc.perform(get("/api/v1/reviews/me")
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .queryParam("sort", "recent"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content[0].reviewId")
+                .value(expectedFirstId.toString()));
+    }
+
+    @Test
+    void rejectsMyReviewPageSizeOverTwoHundred() throws Exception {
+        mockMvc.perform(get("/api/v1/reviews/me")
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .queryParam("size", "201"))
+            .andExpect(status().isBadRequest());
     }
 
     @Test

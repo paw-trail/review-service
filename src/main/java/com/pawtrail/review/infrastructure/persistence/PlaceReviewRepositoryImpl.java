@@ -63,14 +63,45 @@ public class PlaceReviewRepositoryImpl implements PlaceReviewRepository {
     }
 
     @Override
-    public List<PlaceReview> findActiveByAccountId(UUID accountId, ReviewSort sort) {
+    public ReviewPage<PlaceReview> findActiveByAccountId(
+        UUID accountId,
+        ReviewSort sort,
+        int page,
+        int size
+    ) {
         Sort springSort = switch (sort) {
-            case RECENT -> Sort.by(Sort.Order.desc("visitedAt"), Sort.Order.desc("createdAt"));
-            case OLDEST -> Sort.by(Sort.Order.asc("visitedAt"), Sort.Order.asc("createdAt"));
-            case RATING_DESC -> Sort.by(Sort.Order.desc("rating"), Sort.Order.desc("visitedAt"));
-            case RATING_ASC -> Sort.by(Sort.Order.asc("rating"), Sort.Order.desc("visitedAt"));
+            case RECENT -> Sort.by(
+                Sort.Order.desc("visitedAt"),
+                Sort.Order.desc("createdAt"),
+                Sort.Order.desc("id")
+            );
+            case OLDEST -> Sort.by(
+                Sort.Order.asc("visitedAt"),
+                Sort.Order.asc("createdAt"),
+                Sort.Order.asc("id")
+            );
+            case RATING_DESC -> Sort.by(
+                Sort.Order.desc("rating"),
+                Sort.Order.desc("visitedAt"),
+                Sort.Order.desc("id")
+            );
+            case RATING_ASC -> Sort.by(
+                Sort.Order.asc("rating"),
+                Sort.Order.desc("visitedAt"),
+                Sort.Order.desc("id")
+            );
         };
-        return jpaRepository.findByAccountIdAndDeletedAtIsNull(accountId, springSort);
+        Page<PlaceReview> result = jpaRepository.findByAccountIdAndDeletedAtIsNull(
+            accountId,
+            PageRequest.of(page, size, springSort)
+        );
+        return new ReviewPage<>(
+            result.getContent(),
+            result.getNumber(),
+            result.getSize(),
+            result.getTotalElements(),
+            result.getTotalPages()
+        );
     }
 
     @Override
