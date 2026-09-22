@@ -9,6 +9,7 @@ import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
 import com.pawtrail.review.domain.enums.ReviewSort;
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.provider.PlaceProvider;
+import com.pawtrail.review.domain.provider.ReviewTagProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
@@ -33,6 +34,7 @@ public class ReviewService {
     private final PlaceReviewRepository reviewRepository;
     private final ReviewLikeRepository reviewLikeRepository;
     private final UserProvider userProvider;
+    private final ReviewTagProvider reviewTagProvider;
 
     private final PlaceProvider placeProvider;
 
@@ -137,5 +139,9 @@ public class ReviewService {
         };
     }
 
+
+    public List<String> findTags() {
+        return reviewTagProvider.findAll();
+    }
 
 }
