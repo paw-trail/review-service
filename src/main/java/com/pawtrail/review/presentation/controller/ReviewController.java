@@ -1,12 +1,11 @@
 package com.pawtrail.review.presentation.controller;
 
-
 import com.pawtrail.common.response.CommonApiResponse;
 import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.common.security.annotation.CurrentUser;
 import com.pawtrail.common.security.principal.CustomUserPrincipal;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
-import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
+import com.pawtrail.review.application.dto.output.PlaceReviewListOutput;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.application.service.ReviewService;
 import com.pawtrail.review.presentation.request.UploadUrlRequest;
@@ -27,19 +26,30 @@ import java.util.UUID;
 @Validated
 public class ReviewController {
 
+    // 한 번에 받을 수 있는 최대 개수입니다.
+    //
+    // 목록을 그리려면 장소 이름이나 작성자 이름을 다른 서비스에서 받아 와야 하는데
+    // 그쪽 조회 API 가 한 번에 100개까지만 받습니다.
+    // 이 값을 그보다 크게 두면 목록 한 쪽을 채우는 데 호출이 여러 번 필요해집니다.
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final ReviewService reviewService;
 
     @GetMapping("/places/{placeId}/reviews")
-    public CommonApiResponse<PageResponse<ReviewDetailOutput>> findByPlace(
+    public CommonApiResponse<PlaceReviewListOutput> findByPlace(
         @PathVariable UUID placeId,
         @CurrentUser CustomUserPrincipal principal,
+        @RequestParam(defaultValue = "recent") String sort,
+        @RequestParam(defaultValue = "false") boolean photoOnly,
         @RequestParam(defaultValue = "0") @PositiveOrZero int page,
-        @RequestParam(defaultValue = "10") @Positive @Max(200) int size
+        @RequestParam(defaultValue = "20") @Positive @Max(MAX_PAGE_SIZE) int size
     ) {
         return CommonApiResponse.success(reviewService.findByPlace(
             principal.accountId(),
             principal.role(),
             placeId,
+            sort,
+            photoOnly,
             page,
             size
         ));
@@ -50,7 +60,7 @@ public class ReviewController {
         @CurrentUser CustomUserPrincipal principal,
         @RequestParam(defaultValue = "recent") String sort,
         @RequestParam(defaultValue = "0") @PositiveOrZero int page,
-        @RequestParam(defaultValue = "200") @Positive @Max(200) int size
+        @RequestParam(defaultValue = "20") @Positive @Max(MAX_PAGE_SIZE) int size
     ) {
         return CommonApiResponse.success(reviewService.findMine(
             principal.accountId(),
@@ -59,7 +69,6 @@ public class ReviewController {
             size
         ));
     }
-
 
     @GetMapping("/reviews/tags")
     public CommonApiResponse<List<String>> findTags() {
@@ -77,5 +86,4 @@ public class ReviewController {
             request.contentType()
         ));
     }
-
 }

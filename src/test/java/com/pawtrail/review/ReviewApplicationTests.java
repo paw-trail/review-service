@@ -88,7 +88,7 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.content.length()").value(0))
             .andExpect(jsonPath("$.data.page.number").value(0))
-            .andExpect(jsonPath("$.data.page.size").value(200))
+            .andExpect(jsonPath("$.data.page.size").value(20))
             .andExpect(jsonPath("$.data.page.totalElements").value(0))
             .andExpect(jsonPath("$.data.page.totalPages").value(0));
 
@@ -96,7 +96,7 @@ class ReviewApplicationTests {
     }
 
     @Test
-    void returnsMineTwoHundredAtATime() throws Exception {
+    void returnsMineOneHundredAtATime() throws Exception {
         UUID accountId = UUID.randomUUID();
         UUID placeId = UUID.randomUUID();
         UUID petId = UUID.randomUUID();
@@ -128,24 +128,26 @@ class ReviewApplicationTests {
         mockMvc.perform(get("/api/v1/reviews/me")
                 .header("X-User-Id", accountId)
                 .header("X-User-Role", "USER")
-                .queryParam("page", "0"))
+                .queryParam("page", "0")
+                .queryParam("size", "100"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.content.length()").value(200))
+            .andExpect(jsonPath("$.data.content.length()").value(100))
             .andExpect(jsonPath("$.data.content[0].placeName").value("테스트 장소"))
             .andExpect(jsonPath("$.data.page.number").value(0))
-            .andExpect(jsonPath("$.data.page.size").value(200))
+            .andExpect(jsonPath("$.data.page.size").value(100))
             .andExpect(jsonPath("$.data.page.totalElements").value(201))
-            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+            .andExpect(jsonPath("$.data.page.totalPages").value(3));
 
         mockMvc.perform(get("/api/v1/reviews/me")
                 .header("X-User-Id", accountId)
                 .header("X-User-Role", "USER")
-                .queryParam("page", "1"))
+                .queryParam("page", "2")
+                .queryParam("size", "100"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.content.length()").value(1))
-            .andExpect(jsonPath("$.data.page.number").value(1))
+            .andExpect(jsonPath("$.data.page.number").value(2))
             .andExpect(jsonPath("$.data.page.totalElements").value(201))
-            .andExpect(jsonPath("$.data.page.totalPages").value(2));
+            .andExpect(jsonPath("$.data.page.totalPages").value(3));
     }
 
     @Test
@@ -188,11 +190,11 @@ class ReviewApplicationTests {
     }
 
     @Test
-    void rejectsMyReviewPageSizeOverTwoHundred() throws Exception {
+    void rejectsMyReviewPageSizeOverOneHundred() throws Exception {
         mockMvc.perform(get("/api/v1/reviews/me")
                 .header("X-User-Id", UUID.randomUUID())
                 .header("X-User-Role", "USER")
-                .queryParam("size", "201"))
+                .queryParam("size", "101"))
             .andExpect(status().isBadRequest());
     }
 
@@ -222,12 +224,12 @@ class ReviewApplicationTests {
     }
 
     @Test
-    void rejectsReviewPageSizeOverTwoHundred() throws Exception {
+    void rejectsReviewPageSizeOverOneHundred() throws Exception {
         mockMvc.perform(get("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
                 .header("X-User-Id", UUID.randomUUID())
                 .header("X-User-Role", "USER")
                 .queryParam("page", "0")
-                .queryParam("size", "201"))
+                .queryParam("size", "101"))
             .andExpect(status().isBadRequest());
     }
 
@@ -280,6 +282,121 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.data.page.number").value(1))
             .andExpect(jsonPath("$.data.page.totalElements").value(101))
             .andExpect(jsonPath("$.data.page.totalPages").value(2));
+    }
+
+    @Test
+    void sortsPlaceReviewsByRatingAndFiltersByPhoto() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        placeReviewJpaRepository.saveAllAndFlush(List.of(
+            PlaceReview.create(
+                placeId, authorId, petId, LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 5, (short) 5, (short) 5,
+                "사진 있는 후기", List.of("reviews/" + authorId + "/a.jpg"), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            PlaceReview.create(
+                placeId, authorId, petId, LocalDate.of(2026, 9, 11),
+                (short) 3, (short) 3, (short) 3, (short) 3,
+                "사진 없는 후기", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            PlaceReview.create(
+                placeId, authorId, petId, LocalDate.of(2026, 9, 12),
+                (short) 1, (short) 1, (short) 1, (short) 1,
+                "사진 있는 낮은 점수 후기", List.of("reviews/" + authorId + "/b.jpg"), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            )
+        ));
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        // 별점 낮은 순
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("sort", "rating_asc"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(3))
+            .andExpect(jsonPath("$.data.content[0].rating").value(1))
+            .andExpect(jsonPath("$.data.content[2].rating").value(5));
+
+        // 별점 높은 순
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("sort", "rating_desc"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content[0].rating").value(5));
+
+        // 사진만 보기를 켜면 목록과 건수는 줄지만 요약은 장소 전체 기준 그대로임
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER")
+                .queryParam("photoOnly", "true"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(2))
+            .andExpect(jsonPath("$.data.page.totalElements").value(2))
+            .andExpect(jsonPath("$.data.summary.reviewCount").value(3))
+            .andExpect(jsonPath("$.data.summary.ratingAvg").value(3.0));
+    }
+
+    @Test
+    void returnsPlaceSummaryWithFourAveragesAndCount() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        placeReviewJpaRepository.saveAllAndFlush(List.of(
+            PlaceReview.create(
+                placeId, authorId, petId, LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 4, (short) 3, (short) 2,
+                "첫 번째 후기", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            PlaceReview.create(
+                placeId, authorId, petId, LocalDate.of(2026, 9, 11),
+                (short) 4, (short) 3, (short) 2, (short) 1,
+                "두 번째 후기", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            )
+        ));
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.page.size").value(20))
+            .andExpect(jsonPath("$.data.summary.ratingAvg").value(4.5))
+            .andExpect(jsonPath("$.data.summary.facilityAvg").value(3.5))
+            .andExpect(jsonPath("$.data.summary.ruleAvg").value(2.5))
+            .andExpect(jsonPath("$.data.summary.moodAvg").value(1.5))
+            .andExpect(jsonPath("$.data.summary.reviewCount").value(2));
+    }
+
+    @Test
+    void returnsZeroSummaryForPlaceWithoutReviews() throws Exception {
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(0))
+            .andExpect(jsonPath("$.data.summary.reviewCount").value(0))
+            .andExpect(jsonPath("$.data.summary.ratingAvg").value(0.0));
+    }
+
+    @Test
+    void rejectsUnknownPlaceReviewSort() throws Exception {
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .queryParam("sort", "oldest"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     @Test

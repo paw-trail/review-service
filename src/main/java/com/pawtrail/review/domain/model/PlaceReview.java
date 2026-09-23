@@ -10,6 +10,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Formula;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
@@ -71,6 +72,16 @@ public class PlaceReview extends BaseEntity {
 
     @Column(name = "like_count", nullable = false, insertable = false, updatable = false)
     private int likeCount;
+
+    // 사진이 한 장이라도 있는지를 조회에서 거르려고 둔 읽기 전용 칸입니다.
+    //
+    // photos 는 text[] 한 칸이라 JPQL 로는 길이를 물을 수 없습니다.
+    // @Formula 는 이 식을 그대로 SELECT 에 실어 주므로
+    // 저장소가 photoCount > 0 조건으로 사진 있는 후기만 고를 수 있습니다.
+    //
+    // 표에는 없는 칸이라 저장·수정 대상이 아니며 ddl-auto: validate 도 보지 않습니다.
+    @Formula("cardinality(photos)")
+    private Integer photoCount;
 
     @Column(name = "pet_breed_at_visit", length = 40)
     private String petBreedAtVisit;
