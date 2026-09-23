@@ -20,14 +20,19 @@ public record MyReviewOutput(
     LocalDate visitedAt,
     PetSummary petSummary
 ) {
-    public static MyReviewOutput of(PlaceReview review, PlaceSummary place) {
+    // photoUrls 는 서명된 보기 주소입니다. 표에는 키가 들어 있습니다.
+    public static MyReviewOutput of(
+        PlaceReview review,
+        PlaceSummary place,
+        List<String> photoUrls
+    ) {
         return new MyReviewOutput(
             review.getId(),
             review.getPlaceId(),
             place.name(),
             review.getRating(),
             review.getContent(),
-            List.copyOf(Arrays.asList(review.getPhotos())),
+            List.copyOf(photoUrls),
             List.copyOf(Arrays.asList(review.getTags())),
             review.getLikeCount(),
             review.getVisitedAt(),

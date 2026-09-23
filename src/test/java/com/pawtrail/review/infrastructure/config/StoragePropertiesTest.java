@@ -15,7 +15,9 @@ class StoragePropertiesTest {
         StorageProperties properties = new StorageProperties(
             "review-images",
             "ap-northeast-2",
-            604_800
+            604_800,
+            604_800,
+            20_971_520
         );
 
         assertThat(validator.validate(properties)).isEmpty();
@@ -26,11 +28,30 @@ class StoragePropertiesTest {
         StorageProperties properties = new StorageProperties(
             "review-images",
             "ap-northeast-2",
-            604_801
+            604_801,
+            604_801,
+            20_971_520
         );
 
         assertThat(validator.validate(properties))
             .anyMatch(violation -> violation.getPropertyPath().toString()
-                .equals("uploadExpiresSeconds"));
+                .equals("uploadExpiresSeconds"))
+            .anyMatch(violation -> violation.getPropertyPath().toString()
+                .equals("downloadExpiresSeconds"));
+    }
+
+    @Test
+    void rejectsNonPositiveMaxImageBytes() {
+        StorageProperties properties = new StorageProperties(
+            "review-images",
+            "ap-northeast-2",
+            600,
+            3_600,
+            0
+        );
+
+        assertThat(validator.validate(properties))
+            .anyMatch(violation -> violation.getPropertyPath().toString()
+                .equals("maxImageBytes"));
     }
 }

@@ -26,12 +26,16 @@ public record ReviewDetailOutput(
     Author author,
     PetSummary petSummary
 ) {
+    // photoUrls 는 서명된 보기 주소입니다.
+    // 표에는 키가 들어 있고 유효 시간이 있는 주소는 저장하지 않으므로
+    // 서비스가 그때그때 서명해 넘깁니다.
     public static ReviewDetailOutput of(
         PlaceReview review,
         UserSummary author,
         boolean likedByMe,
         boolean isMine,
-        boolean canDelete
+        boolean canDelete,
+        List<String> photoUrls
     ) {
         return new ReviewDetailOutput(
             review.getId(),
@@ -40,7 +44,7 @@ public record ReviewDetailOutput(
             review.getRuleScore(),
             review.getMoodScore(),
             review.getContent(),
-            List.copyOf(Arrays.asList(review.getPhotos())),
+            List.copyOf(photoUrls),
             List.copyOf(Arrays.asList(review.getTags())),
             review.getLikeCount(),
             likedByMe,

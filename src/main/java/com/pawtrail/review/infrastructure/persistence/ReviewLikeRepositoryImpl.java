@@ -1,7 +1,5 @@
 package com.pawtrail.review.infrastructure.persistence;
 
-import com.pawtrail.review.domain.model.ReviewLike;
-import com.pawtrail.review.domain.model.ReviewLikeId;
 import com.pawtrail.review.domain.repository.ReviewLikeRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.ReviewLikeJpaRepository;
 import lombok.RequiredArgsConstructor;
@@ -18,18 +16,13 @@ public class ReviewLikeRepositoryImpl implements ReviewLikeRepository {
     private final ReviewLikeJpaRepository jpaRepository;
 
     @Override
-    public boolean exists(UUID reviewId, UUID accountId) {
-        return jpaRepository.existsById(ReviewLikeId.of(reviewId, accountId));
-    }
-
-    @Override
-    public ReviewLike save(ReviewLike reviewLike) {
-        return jpaRepository.save(reviewLike);
+    public void insertIfAbsent(UUID reviewId, UUID accountId) {
+        jpaRepository.insertIfAbsent(reviewId, accountId);
     }
 
     @Override
     public void delete(UUID reviewId, UUID accountId) {
-        jpaRepository.deleteById(ReviewLikeId.of(reviewId, accountId));
+        jpaRepository.deleteLike(reviewId, accountId);
     }
 
     @Override
@@ -37,6 +30,7 @@ public class ReviewLikeRepositoryImpl implements ReviewLikeRepository {
         if (reviewIds.isEmpty()) {
             return Set.of();
         }
+
         return jpaRepository.findLikedReviewIds(accountId, reviewIds);
     }
 

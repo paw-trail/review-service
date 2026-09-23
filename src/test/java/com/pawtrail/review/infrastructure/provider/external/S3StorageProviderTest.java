@@ -2,12 +2,13 @@ package com.pawtrail.review.infrastructure.provider.external;
 
 import com.pawtrail.common.exception.CommonErrorCode;
 import com.pawtrail.common.exception.CustomException;
-import com.pawtrail.review.domain.provider.dto.UploadTarget;
 import com.pawtrail.review.infrastructure.config.StorageProperties;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
@@ -15,60 +16,171 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class S3StorageProviderTest {
 
     private static final StorageProperties PROPERTIES = new StorageProperties(
         "review-images",
         "ap-northeast-2",
-        900
+        900,
+        3_600,
+        20_971_520
     );
 
     @Test
-    void createsAccountScopedPutAndGetPresignedUrls() throws Exception {
+    void createsAccountScopedKeyAndUnsignedFileUrl() {
         UUID accountId = UUID.randomUUID();
 
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
-            UploadTarget target = provider.createReviewUpload(
-                accountId,
-                "review photo.jpg",
-                "image/jpeg"
-            );
+            String key = provider.newPhotoKey(accountId, "review photo.jpg");
 
-            URI uploadUri = URI.create(target.uploadUrl());
-            URI fileUri = URI.create(target.fileUrl());
-            String expectedKeyPrefix = "/reviews/" + accountId + "/";
-
-            assertThat(uploadUri.getPath())
-                .startsWith(expectedKeyPrefix)
+            assertThat(key)
+                .startsWith("reviews/" + accountId + "/")
                 .endsWith("-review_photo.jpg");
-            assertThat(fileUri.getPath()).isEqualTo(uploadUri.getPath());
+
+            URI fileUri = URI.create(provider.publicUrl(key));
+
+            assertThat(fileUri.getHost()).isEqualTo("review-images.s3.ap-northeast-2.amazonaws.com");
+            assertThat(fileUri.getPath()).isEqualTo("/" + key);
+            assertThat(fileUri.getRawQuery()).isNull();
+        }
+    }
+
+    @Test
+    void signsUploadWithContentTypeAndLength() {
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String key = provider.newPhotoKey(UUID.randomUUID(), "review.jpg");
+            URI uploadUri = URI.create(provider.presignUpload(key, "image/jpeg", 1024));
+
+            assertThat(uploadUri.getPath()).isEqualTo("/" + key);
             assertThat(uploadUri.getRawQuery())
                 .contains("X-Amz-Signature")
-                .contains("X-Amz-SignedHeaders=content-type%3Bhost");
-            assertThat(fileUri.getRawQuery())
+                .contains("content-length")
+                .contains("content-type");
+        }
+    }
+
+    @Test
+    void signsDownloadWithDownloadLifetime() {
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String key = provider.newPhotoKey(UUID.randomUUID(), "review.jpg");
+            URI downloadUri = URI.create(provider.presignDownload(key));
+
+            assertThat(downloadUri.getPath()).isEqualTo("/" + key);
+            assertThat(downloadUri.getRawQuery())
                 .contains("X-Amz-Signature")
-                .contains("X-Amz-SignedHeaders=host");
-            assertThat(target.expiresIn()).isEqualTo(900);
+                .contains("X-Amz-Expires=3600");
+        }
+    }
+
+    @Test
+    void extractsKeyFromOwnFileUrl() {
+        UUID accountId = UUID.randomUUID();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String key = provider.newPhotoKey(accountId, "review.jpg");
+
+            assertThat(provider.extractOwnedKey(provider.publicUrl(key), accountId))
+                .contains(key);
+        }
+    }
+
+    // 서명이 붙은 주소도 받습니다.
+    //
+    // 목록 응답의 사진이 서명된 보기 주소라, 수정할 때 남길 사진을 그대로 돌려보내려면
+    // 그 주소에서 키를 뽑을 수 있어야 합니다.
+    @Test
+    void extractsKeyFromSignedViewUrl() {
+        UUID accountId = UUID.randomUUID();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String key = provider.newPhotoKey(accountId, "review.jpg");
+
+            assertThat(provider.extractOwnedKey(provider.presignDownload(key), accountId))
+                .contains(key);
+        }
+    }
+
+    // 남의 자리, 다른 버킷, 더 깊은 경로는 받지 않습니다.
+    @Test
+    void rejectsUrlsThatAreNotOwnObject() {
+        UUID accountId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String othersKey = provider.newPhotoKey(otherId, "review.jpg");
+            String ownKey = provider.newPhotoKey(accountId, "review.jpg");
+
+            assertThat(provider.extractOwnedKey(provider.publicUrl(othersKey), accountId))
+                .isEmpty();
+            assertThat(provider.extractOwnedKey(
+                "https://other-bucket.s3.ap-northeast-2.amazonaws.com/" + ownKey,
+                accountId
+            )).isEmpty();
+            assertThat(provider.extractOwnedKey("https://review-images.s3.ap-northeast-2."
+                + "amazonaws.com/reviews/" + accountId + "/nested/photo.jpg", accountId))
+                .isEmpty();
+            assertThat(provider.extractOwnedKey(null, accountId)).isEmpty();
         }
     }
 
     @Test
     void rejectsUnsupportedContentType() {
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
-            assertThatThrownBy(() -> provider.createReviewUpload(
-                UUID.randomUUID(),
-                "review.gif",
-                "image/gif"
-            ))
+            String key = provider.newPhotoKey(UUID.randomUUID(), "review.gif");
+
+            assertThatThrownBy(() -> provider.presignUpload(key, "image/gif", 1024))
                 .isInstanceOfSatisfying(CustomException.class, exception ->
                     assertThat(exception.getErrorCode())
                         .isEqualTo(CommonErrorCode.VALIDATION_FAILED));
         }
+    }
+
+    @Test
+    void rejectsBlankFileName() {
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            assertThatThrownBy(() -> provider.newPhotoKey(UUID.randomUUID(), " "))
+                .isInstanceOfSatisfying(CustomException.class, exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(CommonErrorCode.VALIDATION_FAILED));
+        }
+    }
+
+    @Test
+    void deletesObjectByKey() {
+        S3Client s3Client = s3Client();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client, presigner, PROPERTIES);
+
+            provider.delete("reviews/" + UUID.randomUUID() + "/photo.jpg");
+
+            verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
+        }
+    }
+
+    // 지우기는 서명이 아니라 실제 호출이라 클라이언트를 목으로 둡니다.
+    private S3Client s3Client() {
+        return mock(S3Client.class);
     }
 
     private S3Presigner presigner() {
