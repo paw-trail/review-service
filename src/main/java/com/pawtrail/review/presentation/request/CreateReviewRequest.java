@@ -14,8 +14,16 @@ import java.util.UUID;
 
 public record CreateReviewRequest(
 
+    // 함께 다녀온 아이들입니다. 한 마리부터 다섯 마리까지 받습니다.
+    //
+    // 최소 1인 이유는 아무도 고르지 않은 후기가 "누구와 다녀왔는지" 를 잃기 때문입니다.
+    // 상한 5는 사진 상한과 같은 수이며, 말이 안 되는 크기의 요청을 여기서 끊습니다.
+    //
+    // 보낸 순서가 화면에 나오는 순서입니다.
+    // 화면이 배지를 이어 붙이고 자리가 모자라면 뒤를 줄이므로 먼저 고른 아이가 먼저 보입니다.
     @NotNull(message = "어떤 아이와 다녀왔는지 골라 주세요")
-    UUID petId,
+    @Size(min = 1, max = 5, message = "반려동물은 1마리부터 5마리까지 고를 수 있습니다")
+    List<@NotNull(message = "반려동물이 비어 있습니다") UUID> petIds,
 
     // 오늘까지만 받습니다. 다녀온 날이라 미래일 수 없습니다.
     // 서버 시계의 날짜로 보며 컨테이너는 TZ=Asia/Seoul 이라 서울 날짜입니다.
@@ -60,7 +68,7 @@ public record CreateReviewRequest(
 
     public ReviewCreateInput toInput() {
         return new ReviewCreateInput(
-            petId,
+            petIds == null ? List.of() : List.copyOf(petIds),
             visitedAt,
             rating,
             facilityScore,

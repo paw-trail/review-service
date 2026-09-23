@@ -15,6 +15,7 @@ import com.pawtrail.review.domain.enums.ReviewSort;
 import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.model.ReviewPet;
 import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
@@ -25,6 +26,7 @@ import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.domain.repository.ReviewLikeRepository;
+import com.pawtrail.review.domain.repository.ReviewPetRepository;
 import com.pawtrail.review.domain.repository.dto.ReviewPage;
 import com.pawtrail.review.domain.repository.dto.ReviewSummary;
 import com.pawtrail.review.infrastructure.config.StorageProperties;
@@ -50,6 +52,7 @@ public class ReviewService {
 
     private final PlaceReviewRepository reviewRepository;
     private final ReviewLikeRepository reviewLikeRepository;
+    private final ReviewPetRepository reviewPetRepository;
     private final UserProvider userProvider;
     private final ReviewTagProvider reviewTagProvider;
     private final StorageProvider storageProvider;
@@ -87,6 +90,10 @@ public class ReviewService {
 
         Set<UUID> likedReviewIds = reviewLikeRepository.findLikedReviewIds(accountId, reviewIds);
 
+        // 이 쪽에 실린 후기의 아이를 한 번에 받아 옵니다.
+        // 후기마다 따로 물으면 스무 건짜리 목록이 조회를 스무 번 더 냅니다.
+        Map<UUID, List<ReviewPet>> pets = reviewPetRepository.findByReviewIds(reviewIds);
+
         Set<UUID> authorIds = reviews.content().stream()
             .map(PlaceReview::getAccountId)
             .collect(Collectors.toUnmodifiableSet());
@@ -107,7 +114,8 @@ public class ReviewService {
                     likedReviewIds.contains(review.getId()),
                     isMine,
                     isMine || role == Role.ADMIN,
-                    signPhotos(review)
+                    signPhotos(review),
+                    pets.getOrDefault(review.getId(), List.of())
                 );
             })
             .toList();
@@ -117,23 +125,36 @@ public class ReviewService {
 
     // 후기를 씁니다.
     //
+    // 함께 다녀온 아이를 여러 마리 받습니다.
+    // 보낸 순서가 그대로 화면에 나오는 순서라 review_pet 의 sort_order 에 그 자리를 적습니다.
+    //
     // 반려동물 정보를 지금 복사해 둡니다.
     // 나중에 체중이나 크기가 바뀌어도 그때 다녀온 기록은 그대로 남아야 하고,
     // 지금 복사하지 못하면 영영 빈 칸이 되므로 못 받아 오면 작성을 실패시킵니다.
+    //
+    // 한 마리라도 본인의 아이가 아니면 전부 실패시킵니다.
+    // 남의 아이를 빼고 나머지만 저장하면 사용자는 고른 대로 저장된 줄 알게 됩니다.
     //
     // 태그와 사진은 화면이 이미 거른 값이지만 여기서 한 번 더 봅니다.
     // 화면을 거치지 않고 부르는 쪽이 있을 수 있고, 사진 키는 남의 자리를 가리킬 수도 있습니다.
     @Transactional
     public ReviewCreatedOutput create(UUID accountId, UUID placeId, ReviewCreateInput input) {
-        PetSnapshot pet = petProvider.findOwnedPet(accountId, input.petId())
-            .orElseThrow(() -> {
-                log.warn(
-                    "본인의 반려동물이 아닙니다: accountId={}, petId={}",
-                    accountId,
-                    input.petId()
-                );
-                return new CustomException(ReviewErrorCode.PET_NOT_OWNED);
-            });
+        List<UUID> petIds = toUniquePetIds(input.petIds());
+
+        Map<UUID, PetSnapshot> snapshots = petProvider.findOwnedPets(accountId, petIds);
+
+        List<UUID> notOwned = petIds.stream()
+            .filter(petId -> !snapshots.containsKey(petId))
+            .toList();
+
+        if (!notOwned.isEmpty()) {
+            log.warn(
+                "본인의 반려동물이 아닙니다: accountId={}, petIds={}",
+                accountId,
+                notOwned
+            );
+            throw new CustomException(ReviewErrorCode.PET_NOT_OWNED);
+        }
 
         List<String> tags = toAllowedTags(input.tags());
         List<String> photoKeys = toOwnedPhotoKeys(accountId, input.photos());
@@ -141,7 +162,6 @@ public class ReviewService {
         PlaceReview review = PlaceReview.create(
             placeId,
             accountId,
-            input.petId(),
             input.visitedAt(),
             input.rating(),
             input.facilityScore(),
@@ -149,13 +169,14 @@ public class ReviewService {
             input.moodScore(),
             input.content(),
             photoKeys,
-            tags,
-            pet.breedName(),
-            pet.weightKg(),
-            pet.breedSize()
+            tags
         );
 
-        return new ReviewCreatedOutput(reviewRepository.save(review).getId());
+        PlaceReview saved = reviewRepository.save(review);
+
+        reviewPetRepository.saveAll(toReviewPets(saved.getId(), petIds, snapshots));
+
+        return new ReviewCreatedOutput(saved.getId());
     }
 
     // 후기를 고칩니다.
@@ -165,6 +186,8 @@ public class ReviewService {
     //
     // 방문일 · 반려동물 · 스냅샷은 바꾸지 않습니다.
     // 그 넷이 바뀌면 "그때 그 아이로 다녀온 기록" 이라는 글의 전제가 흔들립니다.
+    // 아이를 뒤늦게 더하면 그 스냅샷이 방문 당시가 아니라 오늘 값이 되어
+    // 한 후기 안에서 두 시점이 섞입니다.
     //
     // 사진이 빠지면 그 객체를 커밋 뒤에 지웁니다.
     // 롤백이 났는데 객체만 사라지면 행이 가리키는 사진이 열리지 않기 때문입니다.
@@ -203,6 +226,8 @@ public class ReviewService {
     //
     // 행은 남기고 지운 시각만 적습니다.
     // 신고가 걸려 있거나 통계를 되짚어야 할 때 무엇이 있었는지가 남아야 하기 때문입니다.
+    //
+    // review_pet 도 남습니다. 행을 지우지 않으므로 외래키의 연쇄도 돌지 않습니다.
     //
     // 좋아요는 남기지 않고 지웁니다.
     // 표의 외래키가 ON DELETE CASCADE 라 행을 지울 때만 따라 지워지는데,
@@ -319,6 +344,10 @@ public class ReviewService {
             ? Map.of()
             : placeProvider.getPlaces(placeIds);
 
+        Map<UUID, List<ReviewPet>> pets = reviewPetRepository.findByReviewIds(
+            content.stream().map(PlaceReview::getId).toList()
+        );
+
         List<MyReviewOutput> output = content.stream()
             .map(review -> MyReviewOutput.of(
                 review,
@@ -326,7 +355,8 @@ public class ReviewService {
                     review.getPlaceId(),
                     PlaceSummary.unknown(review.getPlaceId())
                 ),
-                signPhotos(review)
+                signPhotos(review),
+                pets.getOrDefault(review.getId(), List.of())
             ))
             .toList();
 
@@ -379,6 +409,54 @@ public class ReviewService {
         review.delete(deletedBy.toString());
 
         deleteAfterCommit(keys);
+    }
+
+    // 고른 아이를 한 번만 남기고 보낸 순서를 지킵니다.
+    //
+    // 같은 아이를 두 번 보내면 review_pet 의 기본 키가 막지만,
+    // 그 충돌은 커밋 시점에 터져 잡을 수 없는 자리에서 500 이 됩니다.
+    // 화면이 같은 아이를 두 번 담아 보내는 것은 실수일 뿐 실패시킬 일이 아니므로 여기서 거릅니다.
+    private List<UUID> toUniquePetIds(List<UUID> petIds) {
+        Set<UUID> unique = new LinkedHashSet<>();
+
+        for (UUID petId : petIds) {
+            if (petId != null) {
+                unique.add(petId);
+            }
+        }
+
+        if (unique.isEmpty()) {
+            log.warn("고른 반려동물이 없습니다");
+            throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
+        }
+
+        return new ArrayList<>(unique);
+    }
+
+    // 받아 온 스냅샷을 후기에 붙일 행으로 만듭니다.
+    // 목록의 자리가 곧 sort_order 이며 0 부터 셉니다.
+    private List<ReviewPet> toReviewPets(
+        UUID reviewId,
+        List<UUID> petIds,
+        Map<UUID, PetSnapshot> snapshots
+    ) {
+        List<ReviewPet> pets = new ArrayList<>(petIds.size());
+
+        for (int index = 0; index < petIds.size(); index++) {
+            UUID petId = petIds.get(index);
+            PetSnapshot snapshot = snapshots.get(petId);
+
+            pets.add(ReviewPet.create(
+                reviewId,
+                petId,
+                (short) index,
+                snapshot.breedName(),
+                snapshot.weightKg(),
+                snapshot.breedSize()
+            ));
+        }
+
+        return pets;
     }
 
     // 객체를 커밋 뒤에 하나씩 지웁니다.

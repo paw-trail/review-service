@@ -15,7 +15,6 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -40,9 +39,6 @@ public class PlaceReview extends BaseEntity {
 
     @Column(name = "account_id", nullable = false)
     private UUID accountId;
-
-    @Column(name = "pet_id", nullable = false)
-    private UUID petId;
 
     @Column(name = "visited_at", nullable = false)
     private LocalDate visitedAt;
@@ -83,19 +79,16 @@ public class PlaceReview extends BaseEntity {
     @Formula("cardinality(photos)")
     private Integer photoCount;
 
-    @Column(name = "pet_breed_at_visit", length = 40)
-    private String petBreedAtVisit;
-
-    @Column(name = "pet_weight_at_visit", precision = 4, scale = 1)
-    private BigDecimal petWeightAtVisit;
-
-    @Column(name = "pet_size_at_visit", length = 12)
-    private String petSizeAtVisit;
+    // 함께 다녀온 반려동물은 이 엔티티에 없습니다.
+    //
+    // 한 후기에 여러 마리가 들어가고 한 마리가 칸 넷짜리 행이라 자식 표 review_pet 에 둡니다.
+    // @OneToMany 로 매달지 않는 이유는 목록 화면이 후기 여러 건을 한 번에 그리기 때문입니다.
+    // 매달아 두면 아이를 찾는 조회가 후기 수만큼 따로 나가므로,
+    // 저장소가 후기 id 목록으로 한 번에 받아 옵니다.
 
     public static PlaceReview create(
         UUID placeId,
         UUID accountId,
-        UUID petId,
         LocalDate visitedAt,
         short rating,
         short facilityScore,
@@ -103,10 +96,7 @@ public class PlaceReview extends BaseEntity {
         short moodScore,
         String content,
         List<String> photos,
-        List<String> tags,
-        String petBreedAtVisit,
-        BigDecimal petWeightAtVisit,
-        String petSizeAtVisit
+        List<String> tags
     ) {
         validateScores(rating, facilityScore, ruleScore, moodScore);
         validateContent(content);
@@ -114,7 +104,6 @@ public class PlaceReview extends BaseEntity {
         PlaceReview review = new PlaceReview();
         review.placeId = placeId;
         review.accountId = accountId;
-        review.petId = petId;
         review.visitedAt = visitedAt;
         review.rating = rating;
         review.facilityScore = facilityScore;
@@ -124,9 +113,6 @@ public class PlaceReview extends BaseEntity {
         review.photos = toArray(photos);
         review.tags = toArray(tags);
         review.likeCount = 0;
-        review.petBreedAtVisit = petBreedAtVisit;
-        review.petWeightAtVisit = petWeightAtVisit;
-        review.petSizeAtVisit = petSizeAtVisit;
         return review;
     }
 

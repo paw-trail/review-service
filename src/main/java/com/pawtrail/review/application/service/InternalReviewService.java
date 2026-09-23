@@ -3,7 +3,10 @@ package com.pawtrail.review.application.service;
 import com.pawtrail.review.application.dto.output.ReviewCountOutput;
 import com.pawtrail.review.application.dto.output.ReviewPeriodOutput;
 import com.pawtrail.review.application.dto.output.ReviewStatOutput;
+import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.model.ReviewPet;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
+import com.pawtrail.review.domain.repository.ReviewPetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 // 다른 서비스가 부르는 조회입니다.
@@ -25,6 +29,7 @@ import java.util.UUID;
 public class InternalReviewService {
 
     private final PlaceReviewRepository reviewRepository;
+    private final ReviewPetRepository reviewPetRepository;
 
     // 마이페이지의 후기 수입니다.
     public ReviewCountOutput countByAccount(UUID accountId) {
@@ -45,14 +50,26 @@ public class InternalReviewService {
     //
     // 방문일 기준이며 양끝을 포함합니다.
     // 부르는 쪽이 그 하루의 날짜를 from 과 to 에 같은 값으로 넣습니다.
+    //
+    // 견종은 후기마다 목록으로 나갑니다.
+    // 그 하루에 여러 마리와 다녀왔을 수 있어 한 칸으로는 담기지 않습니다.
     public List<ReviewPeriodOutput> findByAccountAndPeriod(
         UUID accountId,
         LocalDate from,
         LocalDate to
     ) {
-        return reviewRepository
-            .findActiveByAccountIdAndVisitedAtBetween(accountId, from, to).stream()
-            .map(ReviewPeriodOutput::from)
+        List<PlaceReview> reviews = reviewRepository
+            .findActiveByAccountIdAndVisitedAtBetween(accountId, from, to);
+
+        Map<UUID, List<ReviewPet>> pets = reviewPetRepository.findByReviewIds(
+            reviews.stream().map(PlaceReview::getId).toList()
+        );
+
+        return reviews.stream()
+            .map(review -> ReviewPeriodOutput.from(
+                review,
+                pets.getOrDefault(review.getId(), List.of())
+            ))
             .toList();
     }
 }
