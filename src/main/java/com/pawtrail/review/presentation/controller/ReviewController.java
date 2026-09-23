@@ -10,6 +10,7 @@ import com.pawtrail.review.application.dto.output.PlaceReviewListOutput;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.application.service.ReviewService;
 import com.pawtrail.review.presentation.request.CreateReviewRequest;
+import com.pawtrail.review.presentation.request.UpdateReviewRequest;
 import com.pawtrail.review.presentation.request.UploadUrlRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -73,6 +74,27 @@ public class ReviewController {
 
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(CommonApiResponse.success(output));
+    }
+
+    @PatchMapping("/reviews/{reviewId}")
+    public ResponseEntity<CommonApiResponse<Void>> update(
+        @PathVariable UUID reviewId,
+        @CurrentUser CustomUserPrincipal principal,
+        @Valid @RequestBody UpdateReviewRequest request
+    ) {
+        reviewService.update(principal.accountId(), reviewId, request.toInput());
+
+        return ResponseEntity.ok(CommonApiResponse.success(null));
+    }
+
+    @DeleteMapping("/reviews/{reviewId}")
+    public ResponseEntity<CommonApiResponse<Void>> delete(
+        @PathVariable UUID reviewId,
+        @CurrentUser CustomUserPrincipal principal
+    ) {
+        reviewService.delete(principal.accountId(), reviewId);
+
+        return ResponseEntity.ok(CommonApiResponse.success(null));
     }
 
     @GetMapping("/reviews/me")

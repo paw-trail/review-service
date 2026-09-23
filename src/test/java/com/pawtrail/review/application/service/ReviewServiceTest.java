@@ -13,6 +13,8 @@ import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PetSnapshot;
 import com.pawtrail.review.application.dto.input.ReviewCreateInput;
+import com.pawtrail.review.application.dto.input.ReviewUpdateInput;
+import com.pawtrail.review.application.support.AfterCommitExecutor;
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
@@ -33,9 +35,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -72,6 +76,9 @@ class ReviewServiceTest {
     @Mock
     private PetProvider petProvider;
 
+    @Mock
+    private AfterCommitExecutor afterCommitExecutor;
+
     private ReviewService reviewService;
 
     // 설정은 값 객체라 목으로 만들지 않고 실제 값을 넣습니다.
@@ -86,7 +93,8 @@ class ReviewServiceTest {
             storageProvider,
             STORAGE_PROPERTIES,
             placeProvider,
-            petProvider
+            petProvider,
+            afterCommitExecutor
         );
     }
 
@@ -271,5 +279,103 @@ class ReviewServiceTest {
 
         assertEquals(CommonErrorCode.VALIDATION_FAILED, exception.getErrorCode());
         verifyNoInteractions(reviewRepository);
+    }
+
+    // 사진을 바꾸면 빠진 키만 지웁니다. 남는 키는 건드리지 않습니다.
+    @Test
+    void deletesOnlyRemovedPhotoKeysOnUpdate() {
+        UUID accountId = UUID.randomUUID();
+        UUID reviewId = UUID.randomUUID();
+        String keptKey = "reviews/" + accountId + "/kept.jpg";
+        String removedKey = "reviews/" + accountId + "/removed.jpg";
+        String keptUrl = "https://review-images.s3.ap-northeast-2.amazonaws.com/" + keptKey;
+
+        PlaceReview review = PlaceReview.create(
+            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(keptKey, removedKey), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        );
+
+        when(reviewRepository.findActiveByIdForUpdate(reviewId)).thenReturn(Optional.of(review));
+        when(storageProvider.extractOwnedKey(keptUrl, accountId)).thenReturn(Optional.of(keptKey));
+        runAfterCommitImmediately();
+
+        reviewService.update(accountId, reviewId, new ReviewUpdateInput(
+            (short) 3, null, null, null, null, List.of(keptUrl), null
+        ));
+
+        assertEquals((short) 3, review.getRating());
+        assertArrayEquals(new String[] {keptKey}, review.getPhotos());
+        verify(storageProvider).delete(removedKey);
+    }
+
+    @Test
+    void rejectsUpdateOnSomeoneElsesReview() {
+        UUID accountId = UUID.randomUUID();
+        UUID reviewId = UUID.randomUUID();
+
+        PlaceReview review = PlaceReview.create(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        );
+
+        when(reviewRepository.findActiveByIdForUpdate(reviewId)).thenReturn(Optional.of(review));
+
+        CustomException exception = assertThrows(CustomException.class, () ->
+            reviewService.update(accountId, reviewId, new ReviewUpdateInput(
+                (short) 3, null, null, null, null, null, null
+            )));
+
+        assertEquals(ReviewErrorCode.REVIEW_ACCESS_DENIED, exception.getErrorCode());
+    }
+
+    @Test
+    void rejectsUpdateOnMissingReview() {
+        UUID reviewId = UUID.randomUUID();
+
+        when(reviewRepository.findActiveByIdForUpdate(reviewId)).thenReturn(Optional.empty());
+
+        CustomException exception = assertThrows(CustomException.class, () ->
+            reviewService.update(UUID.randomUUID(), reviewId, new ReviewUpdateInput(
+                (short) 3, null, null, null, null, null, null
+            )));
+
+        assertEquals(ReviewErrorCode.REVIEW_NOT_FOUND, exception.getErrorCode());
+    }
+
+    // 지우면 좋아요 행과 사진이 함께 정리됩니다.
+    @Test
+    void marksReviewDeletedAndClearsLikesAndPhotos() {
+        UUID accountId = UUID.randomUUID();
+        UUID reviewId = UUID.randomUUID();
+        String key = "reviews/" + accountId + "/photo.jpg";
+
+        PlaceReview review = PlaceReview.create(
+            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(key), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        );
+
+        when(reviewRepository.findActiveByIdForUpdate(reviewId)).thenReturn(Optional.of(review));
+        runAfterCommitImmediately();
+
+        reviewService.delete(accountId, reviewId);
+
+        assertTrue(review.isDeleted());
+        verify(reviewLikeRepository).deleteAllByReviewId(review.getId());
+        verify(storageProvider).delete(key);
+    }
+
+    // 커밋 뒤 실행기는 목이라 그냥 두면 아무것도 실행되지 않습니다.
+    // 넘긴 작업을 바로 돌려 지우기가 불렸는지 볼 수 있게 합니다.
+    private void runAfterCommitImmediately() {
+        doAnswer(invocation -> {
+            invocation.getArgument(0, Runnable.class).run();
+            return null;
+        }).when(afterCommitExecutor).run(any(Runnable.class), any(String.class));
     }
 }

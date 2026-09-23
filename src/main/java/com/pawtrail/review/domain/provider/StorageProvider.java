@@ -37,4 +37,10 @@ public interface StorageProvider {
 
     // 보기 주소를 서명합니다.
     String presignDownload(String key);
+
+    // 객체를 지웁니다.
+    //
+    // 사진을 바꾸거나 후기를 지울 때 옛 객체를 치우는 자리입니다.
+    // 지우지 못해도 그 키는 조회로 돌아가지 않아 닿을 방법이 없습니다.
+    void delete(String key);
 }

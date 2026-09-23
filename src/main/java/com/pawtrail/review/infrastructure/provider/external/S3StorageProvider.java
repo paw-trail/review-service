@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.exception.SdkException;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -40,6 +42,7 @@ public class S3StorageProvider implements StorageProvider {
     // 경로 방식(s3.리전.amazonaws.com/버킷/키)은 옛 방식이라 쓰지 않습니다.
     private static final String PUBLIC_URL_FORMAT = "https://%s.s3.%s.amazonaws.com/%s";
 
+    private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final StorageProperties properties;
 
@@ -149,6 +152,20 @@ public class S3StorageProvider implements StorageProvider {
                 .build();
 
             return s3Presigner.presignGetObject(presignRequest).url().toExternalForm();
+        } catch (SdkException exception) {
+            throw new CustomException(CommonErrorCode.EXTERNAL_API_ERROR, exception);
+        }
+    }
+
+    @Override
+    public void delete(String key) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                .bucket(properties.bucket())
+                .key(key)
+                .build());
+
+            log.info("객체를 지웠습니다: key={}", key);
         } catch (SdkException exception) {
             throw new CustomException(CommonErrorCode.EXTERNAL_API_ERROR, exception);
         }

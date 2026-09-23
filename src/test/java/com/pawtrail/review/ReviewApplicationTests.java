@@ -40,7 +40,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -595,5 +597,125 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
         verifyNoInteractions(petProvider);
+    }
+
+    @Test
+    void updatesOnlyTheFieldsThatWereSent() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "처음 쓴 내용", List.of(), List.of("주차 편함"),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"rating":2,"content":"다시 가 보니 달랐어요"}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.code").value("SUCCESS"));
+
+        PlaceReview updated = placeReviewJpaRepository.findById(review.getId()).orElseThrow();
+
+        assertThat(updated.getRating()).isEqualTo((short) 2);
+        assertThat(updated.getContent()).isEqualTo("다시 가 보니 달랐어요");
+
+        // 안 보낸 칸은 그대로입니다.
+        assertThat(updated.getFacilityScore()).isEqualTo((short) 4);
+        assertThat(updated.getTags()).containsExactly("주차 편함");
+        assertThat(updated.getVisitedAt()).isEqualTo(LocalDate.of(2026, 9, 10));
+        assertThat(updated.getPetBreedAtVisit()).isEqualTo("골든리트리버");
+    }
+
+    // 빈 배열은 "비움" 입니다. 안 보낸 것과 다릅니다.
+    @Test
+    void clearsTagsWhenAnEmptyArrayIsSent() throws Exception {
+        UUID accountId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of("주차 편함"),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"tags":[]}
+                    """))
+            .andExpect(status().isOk());
+
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().getTags())
+            .isEmpty();
+    }
+
+    @Test
+    void rejectsUpdatingSomeoneElsesReview() throws Exception {
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"rating":1}
+                    """))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("REVIEW_ACCESS_DENIED"));
+    }
+
+    // 소프트 삭제라 행은 남고, 목록과 좋아요에서만 사라집니다.
+    @Test
+    void softDeletesReviewAndRemovesItFromTheList() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+        reviewLikeJpaRepository.saveAndFlush(ReviewLike.create(review.getId(), UUID.randomUUID()));
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        mockMvc.perform(delete("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk());
+
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().isDeleted())
+            .isTrue();
+        assertThat(reviewLikeJpaRepository.count()).isZero();
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content.length()").value(0))
+            .andExpect(jsonPath("$.data.summary.reviewCount").value(0));
+    }
+
+    @Test
+    void rejectsDeletingReviewThatIsAlreadyGone() throws Exception {
+        mockMvc.perform(delete("/api/v1/reviews/{reviewId}", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("REVIEW_NOT_FOUND"));
     }
 }

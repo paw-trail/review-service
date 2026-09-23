@@ -5,10 +5,12 @@ import com.pawtrail.common.exception.CommonErrorCode;
 import com.pawtrail.common.exception.CustomException;
 import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.review.application.dto.input.ReviewCreateInput;
+import com.pawtrail.review.application.dto.input.ReviewUpdateInput;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
 import com.pawtrail.review.application.dto.output.ReviewCreatedOutput;
 import com.pawtrail.review.application.dto.output.PlaceReviewListOutput;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
+import com.pawtrail.review.application.support.AfterCommitExecutor;
 import com.pawtrail.review.domain.enums.ReviewSort;
 import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
@@ -54,6 +56,7 @@ public class ReviewService {
     private final StorageProperties storageProperties;
     private final PlaceProvider placeProvider;
     private final PetProvider petProvider;
+    private final AfterCommitExecutor afterCommitExecutor;
 
     public PlaceReviewListOutput findByPlace(
         UUID accountId,
@@ -155,6 +158,62 @@ public class ReviewService {
         return new ReviewCreatedOutput(reviewRepository.save(review).getId());
     }
 
+    // 후기를 고칩니다.
+    //
+    // 보낸 칸만 바꿉니다. 안 보낸 칸은 지금 값을 그대로 둡니다.
+    // 사진과 태그는 빈 목록이 "비움" 이라 안 보낸 것과 뜻이 다릅니다.
+    //
+    // 방문일 · 반려동물 · 스냅샷은 바꾸지 않습니다.
+    // 그 넷이 바뀌면 "그때 그 아이로 다녀온 기록" 이라는 글의 전제가 흔들립니다.
+    //
+    // 사진이 빠지면 그 객체를 커밋 뒤에 지웁니다.
+    // 롤백이 났는데 객체만 사라지면 행이 가리키는 사진이 열리지 않기 때문입니다.
+    @Transactional
+    public void update(UUID accountId, UUID reviewId, ReviewUpdateInput input) {
+        PlaceReview review = loadOwnReviewForUpdate(accountId, reviewId);
+
+        List<String> previousKeys = List.of(review.getPhotos());
+
+        List<String> nextKeys = input.photos() == null
+            ? null
+            : toOwnedPhotoKeys(accountId, input.photos());
+
+        List<String> nextTags = input.tags() == null
+            ? null
+            : toAllowedTags(input.tags());
+
+        review.update(
+            input.rating(),
+            input.facilityScore(),
+            input.ruleScore(),
+            input.moodScore(),
+            input.content(),
+            nextKeys,
+            nextTags
+        );
+
+        if (nextKeys != null) {
+            deleteAfterCommit(previousKeys.stream()
+                .filter(key -> !nextKeys.contains(key))
+                .toList());
+        }
+    }
+
+    // 내 후기를 지웁니다.
+    //
+    // 행은 남기고 지운 시각만 적습니다.
+    // 신고가 걸려 있거나 통계를 되짚어야 할 때 무엇이 있었는지가 남아야 하기 때문입니다.
+    //
+    // 좋아요는 남기지 않고 지웁니다.
+    // 표의 외래키가 ON DELETE CASCADE 라 행을 지울 때만 따라 지워지는데,
+    // 소프트 삭제는 행이 남으므로 여기서 직접 지워야 남의 "좋아요 누른 후기" 에서 사라집니다.
+    @Transactional
+    public void delete(UUID accountId, UUID reviewId) {
+        PlaceReview review = loadOwnReviewForUpdate(accountId, reviewId);
+
+        removeReview(review, accountId);
+    }
+
     // 사진을 올릴 주소를 발급합니다.
     //
     // 크기 상한을 여기서 봅니다.
@@ -234,6 +293,49 @@ public class ReviewService {
                 reviews.totalPages()
             )
         );
+    }
+
+    // 내 후기를 잠그고 가져옵니다.
+    //
+    // 없거나 이미 지운 후기는 404 이고, 남의 후기는 403 입니다.
+    // 둘을 가르는 이유는 남의 후기라도 그 자리에 무엇이 있다는 사실 자체는 공개이기 때문입니다.
+    private PlaceReview loadOwnReviewForUpdate(UUID accountId, UUID reviewId) {
+        PlaceReview review = reviewRepository.findActiveByIdForUpdate(reviewId)
+            .orElseThrow(() -> new CustomException(ReviewErrorCode.REVIEW_NOT_FOUND));
+
+        if (!review.getAccountId().equals(accountId)) {
+            log.warn(
+                "남의 후기를 고치거나 지우려 했습니다: accountId={}, reviewId={}",
+                accountId,
+                reviewId
+            );
+            throw new CustomException(ReviewErrorCode.REVIEW_ACCESS_DENIED);
+        }
+
+        return review;
+    }
+
+    // 후기 하나를 지웁니다. 사용자 삭제와 관리자 삭제가 같은 자리를 씁니다.
+    private void removeReview(PlaceReview review, UUID deletedBy) {
+        List<String> keys = List.of(review.getPhotos());
+
+        reviewLikeRepository.deleteAllByReviewId(review.getId());
+        review.delete(deletedBy.toString());
+
+        deleteAfterCommit(keys);
+    }
+
+    // 객체를 커밋 뒤에 하나씩 지웁니다.
+    //
+    // 하나씩 넘기는 이유는 실패를 잡아 삼키는 단위가 작업 하나이기 때문입니다.
+    // 여러 개를 한 작업에 담으면 앞엣것이 실패했을 때 뒤엣것이 아예 실행되지 않습니다.
+    private void deleteAfterCommit(List<String> keys) {
+        for (String key : keys) {
+            afterCommitExecutor.run(
+                () -> storageProvider.delete(key),
+                "후기 사진 삭제: key=" + key
+            );
+        }
     }
 
     // 설정에 있는 태그만 받습니다.

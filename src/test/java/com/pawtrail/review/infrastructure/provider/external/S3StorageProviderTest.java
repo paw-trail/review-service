@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 import java.net.URI;
@@ -14,6 +16,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class S3StorageProviderTest {
 
@@ -30,7 +35,7 @@ class S3StorageProviderTest {
         UUID accountId = UUID.randomUUID();
 
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String key = provider.newPhotoKey(accountId, "review photo.jpg");
 
@@ -49,7 +54,7 @@ class S3StorageProviderTest {
     @Test
     void signsUploadWithContentTypeAndLength() {
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String key = provider.newPhotoKey(UUID.randomUUID(), "review.jpg");
             URI uploadUri = URI.create(provider.presignUpload(key, "image/jpeg", 1024));
@@ -65,7 +70,7 @@ class S3StorageProviderTest {
     @Test
     void signsDownloadWithDownloadLifetime() {
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String key = provider.newPhotoKey(UUID.randomUUID(), "review.jpg");
             URI downloadUri = URI.create(provider.presignDownload(key));
@@ -82,7 +87,7 @@ class S3StorageProviderTest {
         UUID accountId = UUID.randomUUID();
 
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String key = provider.newPhotoKey(accountId, "review.jpg");
 
@@ -98,7 +103,7 @@ class S3StorageProviderTest {
         UUID otherId = UUID.randomUUID();
 
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String othersKey = provider.newPhotoKey(otherId, "review.jpg");
             String ownKey = provider.newPhotoKey(accountId, "review.jpg");
@@ -121,7 +126,7 @@ class S3StorageProviderTest {
     @Test
     void rejectsUnsupportedContentType() {
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             String key = provider.newPhotoKey(UUID.randomUUID(), "review.gif");
 
@@ -135,13 +140,31 @@ class S3StorageProviderTest {
     @Test
     void rejectsBlankFileName() {
         try (S3Presigner presigner = presigner()) {
-            S3StorageProvider provider = new S3StorageProvider(presigner, PROPERTIES);
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
 
             assertThatThrownBy(() -> provider.newPhotoKey(UUID.randomUUID(), " "))
                 .isInstanceOfSatisfying(CustomException.class, exception ->
                     assertThat(exception.getErrorCode())
                         .isEqualTo(CommonErrorCode.VALIDATION_FAILED));
         }
+    }
+
+    @Test
+    void deletesObjectByKey() {
+        S3Client s3Client = s3Client();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client, presigner, PROPERTIES);
+
+            provider.delete("reviews/" + UUID.randomUUID() + "/photo.jpg");
+
+            verify(s3Client).deleteObject(any(DeleteObjectRequest.class));
+        }
+    }
+
+    // 지우기는 서명이 아니라 실제 호출이라 클라이언트를 목으로 둡니다.
+    private S3Client s3Client() {
+        return mock(S3Client.class);
     }
 
     private S3Presigner presigner() {
