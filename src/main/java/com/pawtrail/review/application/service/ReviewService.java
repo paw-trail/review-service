@@ -15,7 +15,6 @@ import com.pawtrail.review.domain.enums.ReviewSort;
 import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.model.PlaceReview;
-import com.pawtrail.review.domain.model.ReviewLike;
 import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
@@ -31,7 +30,6 @@ import com.pawtrail.review.domain.repository.dto.ReviewSummary;
 import com.pawtrail.review.infrastructure.config.StorageProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -222,32 +220,22 @@ public class ReviewService {
     // 화면에서 두 번 눌리거나 요청이 재시도돼도 사용자에게는 "좋아요가 켜진 상태" 하나뿐이라,
     // 이미 눌렀다고 409 를 주면 화면이 실패로 보이게 됩니다.
     //
-    // like_count 는 건드리지 않습니다. 표의 트리거가 맞춥니다.
+    // 있는지 보고 넣지 않습니다. 저장소가 한 번에 처리합니다.
+    // 확인과 저장을 나누면 그 사이에 같은 사람의 두 번째 요청이 끼어들어 기본키 충돌이 나는데,
+    // 그 충돌은 잡을 수 없는 자리(커밋 시점)에서 터져 한쪽이 500 을 받습니다.
+    //
+    // like_count 는 건드리지 않습니다. 행이 실제로 들어갔을 때만 표의 트리거가 올립니다.
     @Transactional
     public void like(UUID accountId, UUID reviewId) {
         requireActiveReview(reviewId);
 
-        if (reviewLikeRepository.exists(reviewId, accountId)) {
-            return;
-        }
-
-        try {
-            reviewLikeRepository.save(ReviewLike.create(reviewId, accountId));
-        } catch (DataIntegrityViolationException exception) {
-            // 위 확인과 저장 사이에 같은 사람이 한 번 더 눌러 먼저 들어간 경우입니다.
-            // 결과가 "좋아요가 켜진 상태" 로 같으므로 성공으로 둡니다.
-            log.debug("이미 눌린 좋아요입니다: reviewId={}, accountId={}", reviewId, accountId);
-        }
+        reviewLikeRepository.insertIfAbsent(reviewId, accountId);
     }
 
     // 좋아요를 취소합니다. 누르지 않은 상태에서 불러도 같은 결과입니다.
     @Transactional
     public void unlike(UUID accountId, UUID reviewId) {
         requireActiveReview(reviewId);
-
-        if (!reviewLikeRepository.exists(reviewId, accountId)) {
-            return;
-        }
 
         reviewLikeRepository.delete(reviewId, accountId);
     }

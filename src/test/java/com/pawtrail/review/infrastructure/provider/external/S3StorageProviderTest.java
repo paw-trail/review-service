@@ -96,9 +96,27 @@ class S3StorageProviderTest {
         }
     }
 
-    // 남의 자리, 서명이 붙은 주소, 다른 버킷은 모두 받지 않습니다.
+    // 서명이 붙은 주소도 받습니다.
+    //
+    // 목록 응답의 사진이 서명된 보기 주소라, 수정할 때 남길 사진을 그대로 돌려보내려면
+    // 그 주소에서 키를 뽑을 수 있어야 합니다.
     @Test
-    void rejectsUrlsThatAreNotOwnUnsignedObject() {
+    void extractsKeyFromSignedViewUrl() {
+        UUID accountId = UUID.randomUUID();
+
+        try (S3Presigner presigner = presigner()) {
+            S3StorageProvider provider = new S3StorageProvider(s3Client(), presigner, PROPERTIES);
+
+            String key = provider.newPhotoKey(accountId, "review.jpg");
+
+            assertThat(provider.extractOwnedKey(provider.presignDownload(key), accountId))
+                .contains(key);
+        }
+    }
+
+    // 남의 자리, 다른 버킷, 더 깊은 경로는 받지 않습니다.
+    @Test
+    void rejectsUrlsThatAreNotOwnObject() {
         UUID accountId = UUID.randomUUID();
         UUID otherId = UUID.randomUUID();
 
@@ -109,8 +127,6 @@ class S3StorageProviderTest {
             String ownKey = provider.newPhotoKey(accountId, "review.jpg");
 
             assertThat(provider.extractOwnedKey(provider.publicUrl(othersKey), accountId))
-                .isEmpty();
-            assertThat(provider.extractOwnedKey(provider.presignDownload(ownKey), accountId))
                 .isEmpty();
             assertThat(provider.extractOwnedKey(
                 "https://other-bucket.s3.ap-northeast-2.amazonaws.com/" + ownKey,

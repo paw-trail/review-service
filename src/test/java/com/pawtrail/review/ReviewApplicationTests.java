@@ -10,6 +10,7 @@ import com.pawtrail.review.domain.provider.dto.PetSnapshot;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.application.service.AccountWithdrawnService;
+import com.pawtrail.review.application.service.ReviewService;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.infrastructure.config.ReviewProperties;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
@@ -70,6 +71,9 @@ class ReviewApplicationTests {
 
     @Autowired
     private AccountWithdrawnService accountWithdrawnService;
+
+    @Autowired
+    private ReviewService reviewService;
 
     @Autowired
     private ReviewLikeJpaRepository reviewLikeJpaRepository;
@@ -923,6 +927,70 @@ class ReviewApplicationTests {
 
         // 남의 후기는 남고 좋아요 수만 줄어듭니다.
         assertThat(placeReviewJpaRepository.findById(others.getId()).orElseThrow().getLikeCount())
+            .isZero();
+    }
+
+    // 목록이 내보낸 서명된 주소를 그대로 돌려보내도 수정이 됩니다.
+    //
+    // 사진 두 장 중 한 장만 남기는 경우입니다.
+    // 화면이 들고 있는 것은 서명된 주소뿐이라 이 주소로 키를 뽑을 수 있어야 합니다.
+    @Test
+    void keepsAPhotoWhenTheSignedViewUrlIsSentBack() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        String keptKey = "reviews/" + accountId + "/kept.jpg";
+        String removedKey = "reviews/" + accountId + "/removed.jpg";
+        String signedKeptUrl = "https://test-review-images.s3.ap-northeast-2.amazonaws.com/"
+            + keptKey + "?X-Amz-Signature=abc123";
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(keptKey, removedKey), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+        when(storageProvider.extractOwnedKey(signedKeptUrl, accountId))
+            .thenReturn(Optional.of(keptKey));
+
+        mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"photos":["%s"]}
+                    """.formatted(signedKeptUrl)))
+            .andExpect(status().isOk());
+
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().getPhotos())
+            .containsExactly(keptKey);
+    }
+
+    // 같은 사람이 두 번 눌러도 행은 하나입니다.
+    //
+    // 확인과 저장을 나누지 않고 저장소가 한 번에 처리하므로 기본키 충돌이 나지 않습니다.
+    @Test
+    void likeInsertsAtMostOneRowPerAccount() {
+        UUID accountId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        reviewService.like(accountId, review.getId());
+        reviewService.like(accountId, review.getId());
+
+        assertThat(reviewLikeJpaRepository.count()).isEqualTo(1);
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().getLikeCount())
+            .isEqualTo(1);
+
+        // 취소도 두 번 부를 수 있습니다.
+        reviewService.unlike(accountId, review.getId());
+        reviewService.unlike(accountId, review.getId());
+
+        assertThat(reviewLikeJpaRepository.count()).isZero();
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().getLikeCount())
             .isZero();
     }
 }

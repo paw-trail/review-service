@@ -35,6 +35,12 @@ public class AccountWithdrawnService {
     //
     // 대신 사진 삭제가 실패하면 후기 삭제까지 함께 되돌아갑니다.
     // 다시 받은 메시지가 처음부터 하게 되므로 결과는 같습니다.
+    //
+    // 여러 장 중 앞엣것을 지운 뒤 뒤엣것이 실패하면 DB 는 되돌아가고 지운 사진은 돌아오지 않습니다.
+    // 그래도 어긋난 채로 남지 않습니다.
+    // S3 의 지우기는 멱등이라 이미 없는 키를 다시 지워도 성공하고,
+    // 재시도가 처음부터 다시 돌면서 남은 사진까지 지우기 때문입니다.
+    // 재시도가 모두 실패하면 DLQ 에 남아 "후기는 남았고 사진 일부가 빠진" 상태가 눈에 보입니다.
     @Transactional
     public void withdraw(UUID accountId) {
         List<PlaceReview> reviews = reviewRepository.findAllByAccountIdForUpdate(accountId);

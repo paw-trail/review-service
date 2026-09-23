@@ -69,11 +69,14 @@ public class S3StorageProvider implements StorageProvider {
             return Optional.empty();
         }
 
-        // 서명이 붙은 주소를 여기서 걸러 냅니다.
-        // 발급한 fileUrl 에는 쿼리도 조각도 없습니다.
-        if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
-            return Optional.empty();
-        }
+        // 쿼리와 조각은 보지 않습니다.
+        //
+        // 목록 응답의 사진은 서명된 보기 주소라 X-Amz-Signature 같은 쿼리가 붙어 있습니다.
+        // 수정할 때 화면이 남길 사진을 그대로 돌려보내려면 그 주소가 들어오므로,
+        // 서명이 붙었다고 거절하면 사진 한 장만 빼는 수정이 막힙니다.
+        //
+        // 거절해서 얻는 보안도 없습니다.
+        // 그 키가 본인 자리인지는 아래의 호스트 · 접두사 · 파일 이름 검사로 가립니다.
 
         if (!"https".equals(uri.getScheme())) {
             return Optional.empty();
