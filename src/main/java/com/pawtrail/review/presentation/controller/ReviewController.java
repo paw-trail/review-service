@@ -112,6 +112,26 @@ public class ReviewController {
         ));
     }
 
+    @PostMapping("/reviews/{reviewId}/like")
+    public ResponseEntity<CommonApiResponse<Void>> like(
+        @PathVariable UUID reviewId,
+        @CurrentUser CustomUserPrincipal principal
+    ) {
+        reviewService.like(principal.accountId(), reviewId);
+
+        return ResponseEntity.ok(CommonApiResponse.success(null));
+    }
+
+    @DeleteMapping("/reviews/{reviewId}/like")
+    public ResponseEntity<CommonApiResponse<Void>> unlike(
+        @PathVariable UUID reviewId,
+        @CurrentUser CustomUserPrincipal principal
+    ) {
+        reviewService.unlike(principal.accountId(), reviewId);
+
+        return ResponseEntity.ok(CommonApiResponse.success(null));
+    }
+
     @GetMapping("/reviews/tags")
     public CommonApiResponse<List<String>> findTags() {
         return CommonApiResponse.success(reviewService.findTags());

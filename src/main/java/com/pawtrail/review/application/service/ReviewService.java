@@ -15,6 +15,7 @@ import com.pawtrail.review.domain.enums.ReviewSort;
 import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.model.ReviewLike;
 import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
@@ -30,6 +31,7 @@ import com.pawtrail.review.domain.repository.dto.ReviewSummary;
 import com.pawtrail.review.infrastructure.config.StorageProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -214,6 +216,62 @@ public class ReviewService {
         removeReview(review, accountId);
     }
 
+    // 좋아요를 누릅니다.
+    //
+    // 여러 번 눌러도 같은 결과입니다.
+    // 화면에서 두 번 눌리거나 요청이 재시도돼도 사용자에게는 "좋아요가 켜진 상태" 하나뿐이라,
+    // 이미 눌렀다고 409 를 주면 화면이 실패로 보이게 됩니다.
+    //
+    // like_count 는 건드리지 않습니다. 표의 트리거가 맞춥니다.
+    @Transactional
+    public void like(UUID accountId, UUID reviewId) {
+        requireActiveReview(reviewId);
+
+        if (reviewLikeRepository.exists(reviewId, accountId)) {
+            return;
+        }
+
+        try {
+            reviewLikeRepository.save(ReviewLike.create(reviewId, accountId));
+        } catch (DataIntegrityViolationException exception) {
+            // 위 확인과 저장 사이에 같은 사람이 한 번 더 눌러 먼저 들어간 경우입니다.
+            // 결과가 "좋아요가 켜진 상태" 로 같으므로 성공으로 둡니다.
+            log.debug("이미 눌린 좋아요입니다: reviewId={}, accountId={}", reviewId, accountId);
+        }
+    }
+
+    // 좋아요를 취소합니다. 누르지 않은 상태에서 불러도 같은 결과입니다.
+    @Transactional
+    public void unlike(UUID accountId, UUID reviewId) {
+        requireActiveReview(reviewId);
+
+        if (!reviewLikeRepository.exists(reviewId, accountId)) {
+            return;
+        }
+
+        reviewLikeRepository.delete(reviewId, accountId);
+    }
+
+    // 관리자가 후기를 지웁니다.
+    //
+    // 지우는 동작은 사용자 삭제와 같고 권한만 다릅니다.
+    // 신고를 승인하기 전에 그 후기를 내리는 자리라 남의 글을 지울 수 있어야 합니다.
+    // 누가 지웠는지는 deleted_by 에 남습니다.
+    @Transactional
+    public void deleteByAdmin(UUID adminAccountId, UUID reviewId) {
+        PlaceReview review = reviewRepository.findActiveByIdForUpdate(reviewId)
+            .orElseThrow(() -> new CustomException(ReviewErrorCode.REVIEW_NOT_FOUND));
+
+        log.info(
+            "관리자가 후기를 지웁니다: adminAccountId={}, reviewId={}, authorId={}",
+            adminAccountId,
+            reviewId,
+            review.getAccountId()
+        );
+
+        removeReview(review, adminAccountId);
+    }
+
     // 사진을 올릴 주소를 발급합니다.
     //
     // 크기 상한을 여기서 봅니다.
@@ -293,6 +351,16 @@ public class ReviewService {
                 reviews.totalPages()
             )
         );
+    }
+
+    // 살아 있는 후기인지만 봅니다.
+    //
+    // 좋아요는 남의 후기에도 누르므로 주인을 보지 않습니다.
+    // 없거나 지운 후기는 404 이며, 지운 글에 좋아요가 붙으면 목록에서 셀 수 없는 수가 됩니다.
+    private void requireActiveReview(UUID reviewId) {
+        if (reviewRepository.findActiveById(reviewId).isEmpty()) {
+            throw new CustomException(ReviewErrorCode.REVIEW_NOT_FOUND);
+        }
     }
 
     // 내 후기를 잠그고 가져옵니다.

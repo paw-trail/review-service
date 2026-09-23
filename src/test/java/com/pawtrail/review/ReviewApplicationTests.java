@@ -718,4 +718,102 @@ class ReviewApplicationTests {
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.code").value("REVIEW_NOT_FOUND"));
     }
+
+    // 두 번 눌러도 한 번 누른 것과 같고, 수는 표의 트리거가 맞춥니다.
+    @Test
+    void likeIsIdempotentAndCountedByTheTrigger() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID authorId = UUID.randomUUID();
+        UUID viewerId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            placeId, authorId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/api/v1/reviews/{reviewId}/like", review.getId())
+                    .header("X-User-Id", viewerId)
+                    .header("X-User-Role", "USER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"));
+        }
+
+        assertThat(reviewLikeJpaRepository.count()).isEqualTo(1);
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content[0].likeCount").value(1))
+            .andExpect(jsonPath("$.data.content[0].likedByMe").value(true));
+
+        // 취소도 두 번 불러도 같습니다.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(delete("/api/v1/reviews/{reviewId}/like", review.getId())
+                    .header("X-User-Id", viewerId)
+                    .header("X-User-Role", "USER"))
+                .andExpect(status().isOk());
+        }
+
+        assertThat(reviewLikeJpaRepository.count()).isZero();
+
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", viewerId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content[0].likeCount").value(0))
+            .andExpect(jsonPath("$.data.content[0].likedByMe").value(false));
+    }
+
+    @Test
+    void rejectsLikeOnReviewThatIsGone() throws Exception {
+        mockMvc.perform(post("/api/v1/reviews/{reviewId}/like", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("REVIEW_NOT_FOUND"));
+    }
+
+    @Test
+    void adminCanDeleteSomeoneElsesReview() throws Exception {
+        UUID adminId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "신고된 후기", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(delete("/api/v1/admin/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", adminId)
+                .header("X-User-Role", "ADMIN"))
+            .andExpect(status().isOk());
+
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().isDeleted())
+            .isTrue();
+    }
+
+    // 일반 사용자는 관리자 경로에 닿지 못합니다.
+    @Test
+    void rejectsAdminDeleteForNormalUser() throws Exception {
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "신고된 후기", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(delete("/api/v1/admin/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isForbidden());
+
+        assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().isDeleted())
+            .isFalse();
+    }
 }
