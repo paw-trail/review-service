@@ -2,6 +2,7 @@ package com.pawtrail.review;
 
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.model.ReviewLike;
+import com.pawtrail.review.domain.model.ReviewPet;
 import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.StorageProvider;
@@ -15,6 +16,7 @@ import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.infrastructure.config.ReviewProperties;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
 import com.pawtrail.review.infrastructure.persistence.jpa.ReviewLikeJpaRepository;
+import com.pawtrail.review.infrastructure.persistence.jpa.ReviewPetJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,6 +81,9 @@ class ReviewApplicationTests {
     private ReviewLikeJpaRepository reviewLikeJpaRepository;
 
     @Autowired
+    private ReviewPetJpaRepository reviewPetJpaRepository;
+
+    @Autowired
     private ReviewProperties reviewProperties;
 
     @MockitoBean
@@ -96,9 +101,13 @@ class ReviewApplicationTests {
     @MockitoBean
     private PetProvider petProvider;
 
+    // 자식 표를 먼저 비웁니다.
+    // 외래키가 ON DELETE CASCADE 라 부모만 지워도 따라 지워지지만,
+    // 지우는 차례를 눈에 보이게 두는 편이 나중에 표가 늘어도 헷갈리지 않습니다.
     @BeforeEach
     void cleanDatabase() {
         reviewLikeJpaRepository.deleteAll();
+        reviewPetJpaRepository.deleteAll();
         placeReviewJpaRepository.deleteAll();
 
         when(storageProvider.presignDownload(anyString()))
@@ -129,13 +138,11 @@ class ReviewApplicationTests {
     void returnsMineOneHundredAtATime() throws Exception {
         UUID accountId = UUID.randomUUID();
         UUID placeId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
 
         List<PlaceReview> reviews = IntStream.rangeClosed(1, 201)
             .mapToObj(number -> PlaceReview.create(
                 placeId,
                 accountId,
-                petId,
                 LocalDate.of(2026, 9, 10),
                 (short) 5,
                 (short) 4,
@@ -143,10 +150,7 @@ class ReviewApplicationTests {
                 (short) 4,
                 "내 리뷰 페이징 테스트 " + number,
                 List.of(),
-                List.of(),
-                "골든리트리버",
-                new BigDecimal("28.5"),
-                "LARGE"
+                List.of()
             ))
             .toList();
         placeReviewJpaRepository.saveAllAndFlush(reviews);
@@ -184,21 +188,18 @@ class ReviewApplicationTests {
     void usesReviewIdAsFinalRecentSortCondition() throws Exception {
         UUID accountId = UUID.randomUUID();
         UUID placeId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
         LocalDate visitedAt = LocalDate.of(2026, 9, 10);
 
         List<PlaceReview> reviews = placeReviewJpaRepository.saveAllAndFlush(List.of(
             PlaceReview.create(
-                placeId, accountId, petId, visitedAt,
+                placeId, accountId, visitedAt,
                 (short) 5, (short) 4, (short) 5, (short) 4,
-                "첫 번째 리뷰", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "첫 번째 리뷰", List.of(), List.of()
             ),
             PlaceReview.create(
-                placeId, accountId, petId, visitedAt,
+                placeId, accountId, visitedAt,
                 (short) 5, (short) 4, (short) 5, (short) 4,
-                "두 번째 리뷰", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "두 번째 리뷰", List.of(), List.of()
             )
         ));
         UUID expectedFirstId = reviews.stream()
@@ -268,13 +269,11 @@ class ReviewApplicationTests {
         UUID placeId = UUID.randomUUID();
         UUID authorId = UUID.randomUUID();
         UUID viewerId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
 
         List<PlaceReview> reviews = IntStream.rangeClosed(1, 101)
             .mapToObj(number -> PlaceReview.create(
                 placeId,
                 authorId,
-                petId,
                 LocalDate.of(2026, 9, 10),
                 (short) 5,
                 (short) 4,
@@ -282,10 +281,7 @@ class ReviewApplicationTests {
                 (short) 4,
                 "페이지네이션 테스트 리뷰 " + number,
                 List.of(),
-                List.of(),
-                "골든리트리버",
-                new BigDecimal("28.5"),
-                "LARGE"
+                List.of()
             ))
             .toList();
         placeReviewJpaRepository.saveAllAndFlush(reviews);
@@ -319,26 +315,22 @@ class ReviewApplicationTests {
         UUID placeId = UUID.randomUUID();
         UUID authorId = UUID.randomUUID();
         UUID viewerId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
 
         placeReviewJpaRepository.saveAllAndFlush(List.of(
             PlaceReview.create(
-                placeId, authorId, petId, LocalDate.of(2026, 9, 10),
+                placeId, authorId, LocalDate.of(2026, 9, 10),
                 (short) 5, (short) 5, (short) 5, (short) 5,
-                "사진 있는 후기", List.of("reviews/" + authorId + "/a.jpg"), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "사진 있는 후기", List.of("reviews/" + authorId + "/a.jpg"), List.of()
             ),
             PlaceReview.create(
-                placeId, authorId, petId, LocalDate.of(2026, 9, 11),
+                placeId, authorId, LocalDate.of(2026, 9, 11),
                 (short) 3, (short) 3, (short) 3, (short) 3,
-                "사진 없는 후기", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "사진 없는 후기", List.of(), List.of()
             ),
             PlaceReview.create(
-                placeId, authorId, petId, LocalDate.of(2026, 9, 12),
+                placeId, authorId, LocalDate.of(2026, 9, 12),
                 (short) 1, (short) 1, (short) 1, (short) 1,
-                "사진 있는 낮은 점수 후기", List.of("reviews/" + authorId + "/b.jpg"), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "사진 있는 낮은 점수 후기", List.of("reviews/" + authorId + "/b.jpg"), List.of()
             )
         ));
         when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
@@ -378,20 +370,17 @@ class ReviewApplicationTests {
         UUID placeId = UUID.randomUUID();
         UUID authorId = UUID.randomUUID();
         UUID viewerId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
 
         placeReviewJpaRepository.saveAllAndFlush(List.of(
             PlaceReview.create(
-                placeId, authorId, petId, LocalDate.of(2026, 9, 10),
+                placeId, authorId, LocalDate.of(2026, 9, 10),
                 (short) 5, (short) 4, (short) 3, (short) 2,
-                "첫 번째 후기", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "첫 번째 후기", List.of(), List.of()
             ),
             PlaceReview.create(
-                placeId, authorId, petId, LocalDate.of(2026, 9, 11),
+                placeId, authorId, LocalDate.of(2026, 9, 11),
                 (short) 4, (short) 3, (short) 2, (short) 1,
-                "두 번째 후기", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "두 번째 후기", List.of(), List.of()
             )
         ));
         when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
@@ -434,12 +423,10 @@ class ReviewApplicationTests {
         UUID placeId = UUID.randomUUID();
         UUID authorId = UUID.randomUUID();
         UUID viewerId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
             placeId,
             authorId,
-            petId,
             LocalDate.of(2026, 9, 10),
             (short) 5,
             (short) 4,
@@ -447,10 +434,11 @@ class ReviewApplicationTests {
             (short) 4,
             "산책로가 넓고 반려견과 함께 쉬기 좋았어요.",
             List.of("https://example.com/review-photo.jpg"),
-            List.of("산책", "주차가능"),
-            "골든리트리버",
-            new BigDecimal("28.5"),
-            "LARGE"
+            List.of("산책", "주차가능")
+        ));
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            review.getId(), UUID.randomUUID(), (short) 0,
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
         ));
         ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
             ReviewLike.create(review.getId(), viewerId)
@@ -478,7 +466,8 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.data.content[0].isMine").value(false))
             .andExpect(jsonPath("$.data.content[0].canDelete").value(false))
             .andExpect(jsonPath("$.data.content[0].author.nickname").value("테스트 작성자"))
-            .andExpect(jsonPath("$.data.content[0].petSummary.breedName").value("골든리트리버"))
+            .andExpect(jsonPath("$.data.content[0].pets.length()").value(1))
+            .andExpect(jsonPath("$.data.content[0].pets[0].breedName").value("골든리트리버"))
             .andExpect(jsonPath("$.data.page.number").value(0))
             .andExpect(jsonPath("$.data.page.totalElements").value(1));
 
@@ -499,9 +488,8 @@ class ReviewApplicationTests {
     }
 
     @Test
-    void deletingReviewCascadesReviewLikes() {
+    void deletingReviewCascadesReviewLikesAndPets() {
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(),
             UUID.randomUUID(),
             UUID.randomUUID(),
             LocalDate.of(2026, 9, 10),
@@ -511,33 +499,40 @@ class ReviewApplicationTests {
             (short) 4,
             "삭제 cascade 검증용 리뷰입니다.",
             List.of(),
-            List.of(),
-            "골든리트리버",
-            new BigDecimal("28.5"),
-            "LARGE"
+            List.of()
         ));
         ReviewLike reviewLike = reviewLikeJpaRepository.saveAndFlush(
             ReviewLike.create(review.getId(), UUID.randomUUID())
         );
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            review.getId(), UUID.randomUUID(), (short) 0,
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
 
         placeReviewRepository.hardDeleteAll(List.of(review));
         placeReviewJpaRepository.flush();
 
         assertThat(placeReviewJpaRepository.existsById(review.getId())).isFalse();
         assertThat(reviewLikeJpaRepository.existsById(reviewLike.getId())).isFalse();
+        assertThat(reviewPetJpaRepository.findByReviewIdOrderBySortOrderAsc(review.getId()))
+            .isEmpty();
     }
 
+    // 고른 순서가 그대로 카드에 실립니다.
     @Test
-    void createsReviewWithPetSnapshotAndReturnsId() throws Exception {
+    void createsReviewWithEveryPetAndReturnsThemInOrder() throws Exception {
         UUID placeId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
-        UUID petId = UUID.randomUUID();
+        UUID firstPet = UUID.randomUUID();
+        UUID secondPet = UUID.randomUUID();
         String photoUrl = "https://test-review-images.s3.ap-northeast-2.amazonaws.com/reviews/"
             + accountId + "/photo.jpg";
 
-        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.of(
-            new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
-        ));
+        when(petProvider.findOwnedPets(accountId, List.of(firstPet, secondPet)))
+            .thenReturn(Map.of(
+                firstPet, new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE"),
+                secondPet, new PetSnapshot("말티즈", new BigDecimal("3.2"), "SMALL")
+            ));
         when(storageProvider.extractOwnedKey(photoUrl, accountId))
             .thenReturn(Optional.of("reviews/" + accountId + "/photo.jpg"));
         when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
@@ -547,26 +542,108 @@ class ReviewApplicationTests {
                 .header("X-User-Role", "USER")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"petId":"%s","visitedAt":"2026-09-10","rating":5,
+                    {"petIds":["%s","%s"],"visitedAt":"2026-09-10","rating":5,
                      "facilityScore":4,"ruleScore":5,"moodScore":4,
                      "content":"좋았어요","photos":["%s"],"tags":["주차 편함"]}
-                    """.formatted(petId, photoUrl)))
+                    """.formatted(firstPet, secondPet, photoUrl)))
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.reviewId").isNotEmpty());
 
         assertThat(placeReviewJpaRepository.findAll()).hasSize(1);
-        assertThat(placeReviewJpaRepository.findAll().getFirst().getPetBreedAtVisit())
-            .isEqualTo("골든리트리버");
 
-        // 목록에는 저장된 키가 아니라 서명된 주소로 나갑니다.
+        UUID reviewId = placeReviewJpaRepository.findAll().getFirst().getId();
+        List<ReviewPet> pets = reviewPetJpaRepository
+            .findByReviewIdOrderBySortOrderAsc(reviewId);
+
+        assertThat(pets).hasSize(2);
+        assertThat(pets.get(0).getPetId()).isEqualTo(firstPet);
+        assertThat(pets.get(0).getSortOrder()).isEqualTo((short) 0);
+        assertThat(pets.get(0).getBreedName()).isEqualTo("골든리트리버");
+        assertThat(pets.get(1).getPetId()).isEqualTo(secondPet);
+        assertThat(pets.get(1).getSortOrder()).isEqualTo((short) 1);
+        assertThat(pets.get(1).getBreedName()).isEqualTo("말티즈");
+
+        // 목록에는 저장된 키가 아니라 서명된 주소로 나가고, 아이는 고른 차례로 실립니다.
         mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
                 .header("X-User-Id", accountId)
                 .header("X-User-Role", "USER"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.content[0].photos[0]")
                 .value("https://signed.example.com/reviews/" + accountId + "/photo.jpg"))
-            .andExpect(jsonPath("$.data.content[0].isMine").value(true));
+            .andExpect(jsonPath("$.data.content[0].isMine").value(true))
+            .andExpect(jsonPath("$.data.content[0].pets.length()").value(2))
+            .andExpect(jsonPath("$.data.content[0].pets[0].breedName").value("골든리트리버"))
+            .andExpect(jsonPath("$.data.content[0].pets[0].weightKg").value(28.5))
+            .andExpect(jsonPath("$.data.content[0].pets[1].breedName").value("말티즈"));
+    }
+
+    // 한 마리라도 남의 아이면 후기 자체가 저장되지 않습니다.
+    @Test
+    void rejectsCreateWhenOneOfThePetsIsNotOwned() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID mine = UUID.randomUUID();
+        UUID someoneElses = UUID.randomUUID();
+
+        when(petProvider.findOwnedPets(accountId, List.of(mine, someoneElses)))
+            .thenReturn(Map.of(
+                mine, new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
+            ));
+
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petIds":["%s","%s"],"visitedAt":"2026-09-10","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":[],"tags":[]}
+                    """.formatted(mine, someoneElses)))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("PET_NOT_OWNED"));
+
+        assertThat(placeReviewJpaRepository.findAll()).isEmpty();
+        assertThat(reviewPetJpaRepository.findAll()).isEmpty();
+    }
+
+    // 아무도 고르지 않은 후기는 받지 않습니다.
+    @Test
+    void rejectsCreateWithoutAnyPet() throws Exception {
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petIds":[],"visitedAt":"2026-09-10","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":[],"tags":[]}
+                    """))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(petProvider);
+    }
+
+    @Test
+    void rejectsMoreThanFivePets() throws Exception {
+        String petIds = IntStream.rangeClosed(1, 6)
+            .mapToObj(number -> "\"" + UUID.randomUUID() + "\"")
+            .reduce((first, second) -> first + "," + second)
+            .orElseThrow();
+
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petIds":[%s],"visitedAt":"2026-09-10","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":[],"tags":[]}
+                    """.formatted(petIds)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(petProvider);
     }
 
     @Test
@@ -576,7 +653,7 @@ class ReviewApplicationTests {
                 .header("X-User-Role", "USER")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"petId":"%s","visitedAt":"%s","rating":5,
+                    {"petIds":["%s"],"visitedAt":"%s","rating":5,
                      "facilityScore":4,"ruleScore":5,"moodScore":4,
                      "content":"좋았어요","photos":[],"tags":[]}
                     """.formatted(UUID.randomUUID(), LocalDate.now().plusDays(1))))
@@ -598,7 +675,7 @@ class ReviewApplicationTests {
                 .header("X-User-Role", "USER")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"petId":"%s","visitedAt":"2026-09-10","rating":5,
+                    {"petIds":["%s"],"visitedAt":"2026-09-10","rating":5,
                      "facilityScore":4,"ruleScore":5,"moodScore":4,
                      "content":"좋았어요","photos":[%s],"tags":[]}
                     """.formatted(UUID.randomUUID(), photos.substring(0, photos.length() - 1))))
@@ -612,11 +689,15 @@ class ReviewApplicationTests {
     void updatesOnlyTheFieldsThatWereSent() throws Exception {
         UUID placeId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            placeId, accountId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "처음 쓴 내용", List.of(), List.of("주차 편함"),
+            "처음 쓴 내용", List.of(), List.of("주차 편함")
+        ));
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            review.getId(), petId, (short) 0,
             "골든리트리버", new BigDecimal("28.5"), "LARGE"
         ));
 
@@ -639,7 +720,47 @@ class ReviewApplicationTests {
         assertThat(updated.getFacilityScore()).isEqualTo((short) 4);
         assertThat(updated.getTags()).containsExactly("주차 편함");
         assertThat(updated.getVisitedAt()).isEqualTo(LocalDate.of(2026, 9, 10));
-        assertThat(updated.getPetBreedAtVisit()).isEqualTo("골든리트리버");
+
+        // 반려동물은 수정 대상이 아닙니다. 방문 당시의 값이라 그대로 남습니다.
+        List<ReviewPet> pets = reviewPetJpaRepository
+            .findByReviewIdOrderBySortOrderAsc(review.getId());
+
+        assertThat(pets).hasSize(1);
+        assertThat(pets.getFirst().getPetId()).isEqualTo(petId);
+        assertThat(pets.getFirst().getBreedName()).isEqualTo("골든리트리버");
+    }
+
+    // 요청에 반려동물 칸이 아예 없으므로 보내도 흘려보냅니다.
+    @Test
+    void ignoresPetIdsSentOnUpdate() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), accountId, LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요", List.of(), List.of()
+        ));
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            review.getId(), petId, (short) 0,
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"rating":3,"petIds":["%s"]}
+                    """.formatted(UUID.randomUUID())))
+            .andExpect(status().isOk());
+
+        List<ReviewPet> pets = reviewPetJpaRepository
+            .findByReviewIdOrderBySortOrderAsc(review.getId());
+
+        assertThat(pets).hasSize(1);
+        assertThat(pets.getFirst().getPetId()).isEqualTo(petId);
+        verifyNoInteractions(petProvider);
     }
 
     // 빈 배열은 "비움" 입니다. 안 보낸 것과 다릅니다.
@@ -648,10 +769,9 @@ class ReviewApplicationTests {
         UUID accountId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), accountId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(), List.of("주차 편함"),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "좋았어요", List.of(), List.of("주차 편함")
         ));
 
         mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
@@ -670,10 +790,9 @@ class ReviewApplicationTests {
     @Test
     void rejectsUpdatingSomeoneElsesReview() throws Exception {
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "좋았어요", List.of(), List.of()
         ));
 
         mockMvc.perform(patch("/api/v1/reviews/{reviewId}", review.getId())
@@ -694,9 +813,12 @@ class ReviewApplicationTests {
         UUID accountId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            placeId, accountId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(), List.of(),
+            "좋았어요", List.of(), List.of()
+        ));
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            review.getId(), UUID.randomUUID(), (short) 0,
             "골든리트리버", new BigDecimal("28.5"), "LARGE"
         ));
         reviewLikeJpaRepository.saveAndFlush(ReviewLike.create(review.getId(), UUID.randomUUID()));
@@ -710,6 +832,10 @@ class ReviewApplicationTests {
         assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().isDeleted())
             .isTrue();
         assertThat(reviewLikeJpaRepository.count()).isZero();
+
+        // 행을 지우지 않으므로 자식 행도 그대로입니다.
+        assertThat(reviewPetJpaRepository.findByReviewIdOrderBySortOrderAsc(review.getId()))
+            .hasSize(1);
 
         mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
                 .header("X-User-Id", accountId)
@@ -736,10 +862,9 @@ class ReviewApplicationTests {
         UUID viewerId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            placeId, authorId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            placeId, authorId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "좋았어요", List.of(), List.of()
         ));
         when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
 
@@ -792,10 +917,9 @@ class ReviewApplicationTests {
         UUID adminId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "신고된 후기", List.of(), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "신고된 후기", List.of(), List.of()
         ));
 
         mockMvc.perform(delete("/api/v1/admin/reviews/{reviewId}", review.getId())
@@ -811,10 +935,9 @@ class ReviewApplicationTests {
     @Test
     void rejectsAdminDeleteForNormalUser() throws Exception {
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "신고된 후기", List.of(), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "신고된 후기", List.of(), List.of()
         ));
 
         mockMvc.perform(delete("/api/v1/admin/reviews/{reviewId}", review.getId())
@@ -832,18 +955,34 @@ class ReviewApplicationTests {
         UUID otherPlaceId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
 
-        placeReviewJpaRepository.saveAllAndFlush(List.of(
+        List<PlaceReview> reviews = placeReviewJpaRepository.saveAllAndFlush(List.of(
             PlaceReview.create(
-                placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+                placeId, accountId, LocalDate.of(2026, 9, 10),
                 (short) 5, (short) 4, (short) 5, (short) 4,
-                "첫 번째", List.of(), List.of(),
-                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+                "첫 번째", List.of(), List.of()
             ),
             PlaceReview.create(
-                placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 12),
+                placeId, accountId, LocalDate.of(2026, 9, 12),
                 (short) 4, (short) 4, (short) 4, (short) 4,
-                "두 번째", List.of(), List.of(),
+                "두 번째", List.of(), List.of()
+            )
+        ));
+
+        // 하루 요약은 그날 함께 다녀온 아이를 모두 씁니다.
+        UUID firstReviewId = reviews.stream()
+            .filter(review -> review.getVisitedAt().equals(LocalDate.of(2026, 9, 10)))
+            .findFirst()
+            .orElseThrow()
+            .getId();
+
+        reviewPetJpaRepository.saveAllAndFlush(List.of(
+            ReviewPet.create(
+                firstReviewId, UUID.randomUUID(), (short) 0,
                 "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            ReviewPet.create(
+                firstReviewId, UUID.randomUUID(), (short) 1,
+                "말티즈", new BigDecimal("3.2"), "SMALL"
             )
         ));
 
@@ -874,7 +1013,9 @@ class ReviewApplicationTests {
             .andExpect(jsonPath("$.data.length()").value(1))
             .andExpect(jsonPath("$.data[0].content").value("첫 번째"))
             .andExpect(jsonPath("$.data[0].visitedAt").value("2026-09-10"))
-            .andExpect(jsonPath("$.data[0].petBreedAtVisit").value("골든리트리버"));
+            .andExpect(jsonPath("$.data[0].petBreedsAtVisit.length()").value(2))
+            .andExpect(jsonPath("$.data[0].petBreedsAtVisit[0]").value("골든리트리버"))
+            .andExpect(jsonPath("$.data[0].petBreedsAtVisit[1]").value("말티즈"));
     }
 
     // 망 안이라고 남의 계정을 물을 수 있는 것은 아닙니다.
@@ -901,15 +1042,17 @@ class ReviewApplicationTests {
         String key = "reviews/" + accountId + "/photo.jpg";
 
         PlaceReview mine = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), accountId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "내 후기", List.of(key), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "내 후기", List.of(key), List.of()
         ));
         PlaceReview others = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), otherId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), otherId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "남의 후기", List.of(), List.of(),
+            "남의 후기", List.of(), List.of()
+        ));
+        reviewPetJpaRepository.saveAndFlush(ReviewPet.create(
+            mine.getId(), UUID.randomUUID(), (short) 0,
             "골든리트리버", new BigDecimal("28.5"), "LARGE"
         ));
 
@@ -924,6 +1067,10 @@ class ReviewApplicationTests {
         assertThat(placeReviewJpaRepository.findById(mine.getId())).isEmpty();
         assertThat(reviewLikeJpaRepository.count()).isZero();
         verify(storageProvider).delete(key);
+
+        // 행을 지우므로 자식 행도 외래키를 따라 사라집니다.
+        assertThat(reviewPetJpaRepository.findByReviewIdOrderBySortOrderAsc(mine.getId()))
+            .isEmpty();
 
         // 남의 후기는 남고 좋아요 수만 줄어듭니다.
         assertThat(placeReviewJpaRepository.findById(others.getId()).orElseThrow().getLikeCount())
@@ -943,10 +1090,9 @@ class ReviewApplicationTests {
             + keptKey + "?X-Amz-Signature=abc123";
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), accountId, LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(keptKey, removedKey), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "좋았어요", List.of(keptKey, removedKey), List.of()
         ));
         when(storageProvider.extractOwnedKey(signedKeptUrl, accountId))
             .thenReturn(Optional.of(keptKey));
@@ -972,10 +1118,9 @@ class ReviewApplicationTests {
         UUID accountId = UUID.randomUUID();
 
         PlaceReview review = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
-            UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            UUID.randomUUID(), UUID.randomUUID(), LocalDate.of(2026, 9, 10),
             (short) 5, (short) 4, (short) 5, (short) 4,
-            "좋았어요", List.of(), List.of(),
-            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            "좋았어요", List.of(), List.of()
         ));
 
         reviewService.like(accountId, review.getId());

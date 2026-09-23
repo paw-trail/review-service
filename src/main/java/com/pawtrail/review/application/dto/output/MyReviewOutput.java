@@ -1,6 +1,7 @@
 package com.pawtrail.review.application.dto.output;
 
 import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.model.ReviewPet;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 
 import java.time.LocalDate;
@@ -18,13 +19,17 @@ public record MyReviewOutput(
     List<String> tags,
     int likeCount,
     LocalDate visitedAt,
-    PetSummary petSummary
+    List<PetSummary> pets
 ) {
     // photoUrls 는 서명된 보기 주소입니다. 표에는 키가 들어 있습니다.
+    //
+    // pets 는 sort_order 순으로 들어옵니다.
+    // 이 화면의 배지는 견종과 크기만 쓰므로 체중은 담지 않습니다.
     public static MyReviewOutput of(
         PlaceReview review,
         PlaceSummary place,
-        List<String> photoUrls
+        List<String> photoUrls,
+        List<ReviewPet> pets
     ) {
         return new MyReviewOutput(
             review.getId(),
@@ -36,7 +41,9 @@ public record MyReviewOutput(
             List.copyOf(Arrays.asList(review.getTags())),
             review.getLikeCount(),
             review.getVisitedAt(),
-            new PetSummary(review.getPetBreedAtVisit(), review.getPetSizeAtVisit())
+            pets.stream()
+                .map(pet -> new PetSummary(pet.getBreedName(), pet.getBreedSize()))
+                .toList()
         );
     }
 
