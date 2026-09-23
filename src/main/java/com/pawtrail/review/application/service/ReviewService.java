@@ -20,16 +20,20 @@ import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.domain.repository.ReviewLikeRepository;
 import com.pawtrail.review.domain.repository.dto.ReviewPage;
 import com.pawtrail.review.domain.repository.dto.ReviewSummary;
+import com.pawtrail.review.infrastructure.config.StorageProperties;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -40,6 +44,7 @@ public class ReviewService {
     private final UserProvider userProvider;
     private final ReviewTagProvider reviewTagProvider;
     private final StorageProvider storageProvider;
+    private final StorageProperties storageProperties;
     private final PlaceProvider placeProvider;
 
     public PlaceReviewListOutput findByPlace(
@@ -90,7 +95,8 @@ public class ReviewService {
                     author,
                     likedReviewIds.contains(review.getId()),
                     isMine,
-                    isMine || role == Role.ADMIN
+                    isMine || role == Role.ADMIN,
+                    signPhotos(review)
                 );
             })
             .toList();
@@ -98,9 +104,37 @@ public class ReviewService {
         return PlaceReviewListOutput.of(content, reviews, summary);
     }
 
-    public UploadUrlOutput createUploadUrl(UUID accountId, String fileName, String contentType) {
-        return UploadUrlOutput.from(
-            storageProvider.createReviewUpload(accountId, fileName, contentType)
+    // 사진을 올릴 주소를 발급합니다.
+    //
+    // 크기 상한을 여기서 봅니다.
+    // 서명에 크기가 들어가 있어 S3 도 그 크기가 아니면 거부하지만,
+    // 그것은 "요청한 크기와 다른 것" 을 막을 뿐 상한을 막지는 못합니다.
+    // 형식과 이름은 요청 객체가 이미 걸렀습니다.
+    //
+    // 돌려주는 fileUrl 은 서명이 붙지 않은 주소입니다.
+    // 작성 요청이 이 주소를 그대로 보내면 서버가 키를 뽑아 저장합니다.
+    public UploadUrlOutput createUploadUrl(
+        UUID accountId,
+        String fileName,
+        String contentType,
+        long contentLength
+    ) {
+        if (contentLength > storageProperties.maxImageBytes()) {
+            log.warn(
+                "이미지가 상한을 넘었습니다: accountId={}, contentLength={}, max={}",
+                accountId,
+                contentLength,
+                storageProperties.maxImageBytes()
+            );
+            throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
+        }
+
+        String key = storageProvider.newPhotoKey(accountId, fileName);
+
+        return new UploadUrlOutput(
+            storageProvider.presignUpload(key, contentType, contentLength),
+            storageProvider.publicUrl(key),
+            storageProperties.uploadExpiresSeconds()
         );
     }
 
@@ -135,7 +169,8 @@ public class ReviewService {
                 places.getOrDefault(
                     review.getPlaceId(),
                     PlaceSummary.unknown(review.getPlaceId())
-                )
+                ),
+                signPhotos(review)
             ))
             .toList();
 
@@ -148,6 +183,16 @@ public class ReviewService {
                 reviews.totalPages()
             )
         );
+    }
+
+    // 표에 든 키를 보기 주소로 바꿉니다.
+    //
+    // 주소에는 유효 시간이 있어 저장해 두면 지난 뒤에 사진이 깨집니다.
+    // 그래서 표에는 키만 넣고 내보낼 때마다 새로 서명합니다.
+    private List<String> signPhotos(PlaceReview review) {
+        return Arrays.stream(review.getPhotos())
+            .map(storageProvider::presignDownload)
+            .toList();
     }
 
     // 장소 상세에서 받는 정렬입니다.

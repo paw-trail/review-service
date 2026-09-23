@@ -3,6 +3,7 @@ package com.pawtrail.review;
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.model.ReviewLike;
 import com.pawtrail.review.domain.provider.PlaceProvider;
+import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -69,10 +71,19 @@ class ReviewApplicationTests {
     @MockitoBean
     private PlaceProvider placeProvider;
 
+    // 사진 주소 서명은 목으로 세웁니다.
+    // 실제 서명에는 AWS 자격 증명이 필요한데 테스트 JVM 에는 없고,
+    // 여기서 보려는 것은 목록과 요약이지 서명 자체가 아닙니다.
+    @MockitoBean
+    private StorageProvider storageProvider;
+
     @BeforeEach
     void cleanDatabase() {
         reviewLikeJpaRepository.deleteAll();
         placeReviewJpaRepository.deleteAll();
+
+        when(storageProvider.presignDownload(anyString()))
+            .thenAnswer(invocation -> "https://signed.example.com/" + invocation.getArgument(0));
     }
 
     @Test

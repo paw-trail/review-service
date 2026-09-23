@@ -70,12 +70,12 @@ class ReviewControllerTest {
             "https://download.example.com",
             900
         );
-        when(reviewService.createUploadUrl(accountId, fileName, contentType)).thenReturn(output);
+        when(reviewService.createUploadUrl(accountId, fileName, contentType, 1024L)).thenReturn(output);
 
         mockMvc.perform(post("/api/v1/reviews/upload-url")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"fileName":"%s","contentType":"%s"}
+                    {"fileName":"%s","contentType":"%s","contentLength":1024}
                     """.formatted(fileName, contentType)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value("SUCCESS"))
@@ -83,7 +83,7 @@ class ReviewControllerTest {
             .andExpect(jsonPath("$.data.fileUrl").value(output.fileUrl()))
             .andExpect(jsonPath("$.data.expiresIn").value(output.expiresIn()));
 
-        verify(reviewService).createUploadUrl(accountId, fileName, contentType);
+        verify(reviewService).createUploadUrl(accountId, fileName, contentType, 1024L);
     }
 
     @Test
@@ -91,7 +91,7 @@ class ReviewControllerTest {
         mockMvc.perform(post("/api/v1/reviews/upload-url")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"fileName":"review.gif","contentType":"image/gif"}
+                    {"fileName":"review.gif","contentType":"image/gif","contentLength":1024}
                     """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
@@ -104,7 +104,7 @@ class ReviewControllerTest {
         mockMvc.perform(post("/api/v1/reviews/upload-url")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"fileName":" ","contentType":"image/jpeg"}
+                    {"fileName":" ","contentType":"image/jpeg","contentLength":1024}
                     """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
@@ -119,8 +119,21 @@ class ReviewControllerTest {
         mockMvc.perform(post("/api/v1/reviews/upload-url")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"fileName":"%s","contentType":"image/png"}
+                    {"fileName":"%s","contentType":"image/png","contentLength":1024}
                     """.formatted(longFileName)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    void rejectsMissingImageContentLength() throws Exception {
+        mockMvc.perform(post("/api/v1/reviews/upload-url")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"fileName":"review.jpg","contentType":"image/jpeg"}
+                    """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 

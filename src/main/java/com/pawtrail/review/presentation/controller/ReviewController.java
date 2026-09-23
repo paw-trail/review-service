@@ -83,7 +83,8 @@ public class ReviewController {
         return CommonApiResponse.success(reviewService.createUploadUrl(
             principal.accountId(),
             request.fileName(),
-            request.contentType()
+            request.contentType(),
+            request.contentLength()
         ));
     }
 }
