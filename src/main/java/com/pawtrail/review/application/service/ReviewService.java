@@ -4,16 +4,21 @@ import com.pawtrail.common.enums.Role;
 import com.pawtrail.common.exception.CommonErrorCode;
 import com.pawtrail.common.exception.CustomException;
 import com.pawtrail.common.response.PageResponse;
+import com.pawtrail.review.application.dto.input.ReviewCreateInput;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
+import com.pawtrail.review.application.dto.output.ReviewCreatedOutput;
 import com.pawtrail.review.application.dto.output.PlaceReviewListOutput;
 import com.pawtrail.review.application.dto.output.ReviewDetailOutput;
 import com.pawtrail.review.domain.enums.ReviewSort;
+import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
 import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
+import com.pawtrail.review.domain.provider.dto.PetSnapshot;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
@@ -26,7 +31,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +53,7 @@ public class ReviewService {
     private final StorageProvider storageProvider;
     private final StorageProperties storageProperties;
     private final PlaceProvider placeProvider;
+    private final PetProvider petProvider;
 
     public PlaceReviewListOutput findByPlace(
         UUID accountId,
@@ -102,6 +110,49 @@ public class ReviewService {
             .toList();
 
         return PlaceReviewListOutput.of(content, reviews, summary);
+    }
+
+    // 후기를 씁니다.
+    //
+    // 반려동물 정보를 지금 복사해 둡니다.
+    // 나중에 체중이나 크기가 바뀌어도 그때 다녀온 기록은 그대로 남아야 하고,
+    // 지금 복사하지 못하면 영영 빈 칸이 되므로 못 받아 오면 작성을 실패시킵니다.
+    //
+    // 태그와 사진은 화면이 이미 거른 값이지만 여기서 한 번 더 봅니다.
+    // 화면을 거치지 않고 부르는 쪽이 있을 수 있고, 사진 키는 남의 자리를 가리킬 수도 있습니다.
+    @Transactional
+    public ReviewCreatedOutput create(UUID accountId, UUID placeId, ReviewCreateInput input) {
+        PetSnapshot pet = petProvider.findOwnedPet(accountId, input.petId())
+            .orElseThrow(() -> {
+                log.warn(
+                    "본인의 반려동물이 아닙니다: accountId={}, petId={}",
+                    accountId,
+                    input.petId()
+                );
+                return new CustomException(ReviewErrorCode.PET_NOT_OWNED);
+            });
+
+        List<String> tags = toAllowedTags(input.tags());
+        List<String> photoKeys = toOwnedPhotoKeys(accountId, input.photos());
+
+        PlaceReview review = PlaceReview.create(
+            placeId,
+            accountId,
+            input.petId(),
+            input.visitedAt(),
+            input.rating(),
+            input.facilityScore(),
+            input.ruleScore(),
+            input.moodScore(),
+            input.content(),
+            photoKeys,
+            tags,
+            pet.breedName(),
+            pet.weightKg(),
+            pet.breedSize()
+        );
+
+        return new ReviewCreatedOutput(reviewRepository.save(review).getId());
     }
 
     // 사진을 올릴 주소를 발급합니다.
@@ -183,6 +234,52 @@ public class ReviewService {
                 reviews.totalPages()
             )
         );
+    }
+
+    // 설정에 있는 태그만 받습니다.
+    //
+    // 같은 태그를 여러 번 보내도 한 번만 남기고 보낸 순서를 지킵니다.
+    private List<String> toAllowedTags(List<String> tags) {
+        if (tags.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> allowed = Set.copyOf(reviewTagProvider.findAll());
+        Set<String> unique = new LinkedHashSet<>();
+
+        for (String tag : tags) {
+            if (!allowed.contains(tag)) {
+                log.warn("추천 태그에 없는 값입니다: tag={}", tag);
+                throw new CustomException(CommonErrorCode.VALIDATION_FAILED);
+            }
+            unique.add(tag);
+        }
+
+        return List.copyOf(unique);
+    }
+
+    // 사진 주소를 키로 바꿉니다.
+    //
+    // 본인 자리(reviews/{accountId}/)의 서명 없는 주소만 받습니다.
+    // 이 검사가 없으면 남의 사진을 자기 후기에 붙일 수 있고,
+    // 나중에 후기를 지우면서 그 키의 객체까지 지우게 됩니다.
+    private List<String> toOwnedPhotoKeys(UUID accountId, List<String> photos) {
+        if (photos.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> unique = new LinkedHashSet<>();
+
+        for (String photo : photos) {
+            String key = storageProvider.extractOwnedKey(photo, accountId)
+                .orElseThrow(() -> {
+                    log.warn("본인 자리의 사진 주소가 아닙니다: accountId={}", accountId);
+                    return new CustomException(CommonErrorCode.VALIDATION_FAILED);
+                });
+            unique.add(key);
+        }
+
+        return new ArrayList<>(unique);
     }
 
     // 표에 든 키를 보기 주소로 바꿉니다.

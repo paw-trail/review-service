@@ -2,9 +2,11 @@ package com.pawtrail.review;
 
 import com.pawtrail.review.domain.model.PlaceReview;
 import com.pawtrail.review.domain.model.ReviewLike;
+import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
+import com.pawtrail.review.domain.provider.dto.PetSnapshot;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
@@ -18,6 +20,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -27,6 +30,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.IntStream;
 
@@ -36,6 +40,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -76,6 +81,9 @@ class ReviewApplicationTests {
     // 여기서 보려는 것은 목록과 요약이지 서명 자체가 아닙니다.
     @MockitoBean
     private StorageProvider storageProvider;
+
+    @MockitoBean
+    private PetProvider petProvider;
 
     @BeforeEach
     void cleanDatabase() {
@@ -508,4 +516,84 @@ class ReviewApplicationTests {
         assertThat(reviewLikeJpaRepository.existsById(reviewLike.getId())).isFalse();
     }
 
+    @Test
+    void createsReviewWithPetSnapshotAndReturnsId() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+        String photoUrl = "https://test-review-images.s3.ap-northeast-2.amazonaws.com/reviews/"
+            + accountId + "/photo.jpg";
+
+        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.of(
+            new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
+        ));
+        when(storageProvider.extractOwnedKey(photoUrl, accountId))
+            .thenReturn(Optional.of("reviews/" + accountId + "/photo.jpg"));
+        when(userProvider.getUsers(anyCollection())).thenReturn(Map.of());
+
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petId":"%s","visitedAt":"2026-09-10","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":["%s"],"tags":["주차 편함"]}
+                    """.formatted(petId, photoUrl)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.reviewId").isNotEmpty());
+
+        assertThat(placeReviewJpaRepository.findAll()).hasSize(1);
+        assertThat(placeReviewJpaRepository.findAll().getFirst().getPetBreedAtVisit())
+            .isEqualTo("골든리트리버");
+
+        // 목록에는 저장된 키가 아니라 서명된 주소로 나갑니다.
+        mockMvc.perform(get("/api/v1/places/{placeId}/reviews", placeId)
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.content[0].photos[0]")
+                .value("https://signed.example.com/reviews/" + accountId + "/photo.jpg"))
+            .andExpect(jsonPath("$.data.content[0].isMine").value(true));
+    }
+
+    @Test
+    void rejectsFutureVisitedAt() throws Exception {
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petId":"%s","visitedAt":"%s","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":[],"tags":[]}
+                    """.formatted(UUID.randomUUID(), LocalDate.now().plusDays(1))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(petProvider);
+    }
+
+    @Test
+    void rejectsMoreThanFivePhotos() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        String photoUrl = "https://test-review-images.s3.ap-northeast-2.amazonaws.com/reviews/"
+            + accountId + "/photo.jpg";
+        String photos = ("\"" + photoUrl + "\",").repeat(6);
+
+        mockMvc.perform(post("/api/v1/places/{placeId}/reviews", UUID.randomUUID())
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"petId":"%s","visitedAt":"2026-09-10","rating":5,
+                     "facilityScore":4,"ruleScore":5,"moodScore":4,
+                     "content":"좋았어요","photos":[%s],"tags":[]}
+                    """.formatted(UUID.randomUUID(), photos.substring(0, photos.length() - 1))))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(petProvider);
+    }
 }

@@ -6,10 +6,15 @@ import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.domain.enums.ReviewSort;
+import com.pawtrail.review.domain.provider.PetProvider;
 import com.pawtrail.review.domain.provider.PlaceProvider;
 import com.pawtrail.review.domain.provider.ReviewTagProvider;
 import com.pawtrail.review.domain.provider.StorageProvider;
 import com.pawtrail.review.domain.provider.UserProvider;
+import com.pawtrail.review.domain.provider.dto.PetSnapshot;
+import com.pawtrail.review.application.dto.input.ReviewCreateInput;
+import com.pawtrail.review.domain.model.PlaceReview;
+import com.pawtrail.review.domain.exception.ReviewErrorCode;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.domain.repository.ReviewLikeRepository;
 import com.pawtrail.review.domain.repository.dto.ReviewPage;
@@ -17,10 +22,14 @@ import com.pawtrail.review.infrastructure.config.StorageProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +69,9 @@ class ReviewServiceTest {
     @Mock
     private StorageProvider storageProvider;
 
+    @Mock
+    private PetProvider petProvider;
+
     private ReviewService reviewService;
 
     // 설정은 값 객체라 목으로 만들지 않고 실제 값을 넣습니다.
@@ -72,7 +85,8 @@ class ReviewServiceTest {
             reviewTagProvider,
             storageProvider,
             STORAGE_PROPERTIES,
-            placeProvider
+            placeProvider,
+            petProvider
         );
     }
 
@@ -144,5 +158,118 @@ class ReviewServiceTest {
 
         assertEquals(CommonErrorCode.VALIDATION_FAILED, exception.getErrorCode());
         verifyNoInteractions(storageProvider);
+    }
+
+    @Test
+    void copiesPetSnapshotAndStoresPhotoKeysOnCreate() {
+        UUID accountId = UUID.randomUUID();
+        UUID placeId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+        String photoUrl = "https://review-images.s3.ap-northeast-2.amazonaws.com/reviews/"
+            + accountId + "/photo.jpg";
+        String photoKey = "reviews/" + accountId + "/photo.jpg";
+
+        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.of(
+            new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
+        ));
+        when(reviewTagProvider.findAll()).thenReturn(List.of("주차 편함", "야외석 넓음"));
+        when(storageProvider.extractOwnedKey(photoUrl, accountId))
+            .thenReturn(Optional.of(photoKey));
+        when(reviewRepository.save(any(PlaceReview.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        reviewService.create(accountId, placeId, new ReviewCreateInput(
+            petId,
+            LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "좋았어요",
+            List.of(photoUrl, photoUrl),
+            List.of("주차 편함", "주차 편함")
+        ));
+
+        ArgumentCaptor<PlaceReview> captor = ArgumentCaptor.forClass(PlaceReview.class);
+        verify(reviewRepository).save(captor.capture());
+
+        PlaceReview saved = captor.getValue();
+        assertEquals("골든리트리버", saved.getPetBreedAtVisit());
+        assertEquals("LARGE", saved.getPetSizeAtVisit());
+        assertEquals(0, new BigDecimal("28.5").compareTo(saved.getPetWeightAtVisit()));
+
+        // 같은 값을 두 번 보내도 한 번만 남습니다.
+        assertEquals(1, saved.getPhotos().length);
+        assertEquals(photoKey, saved.getPhotos()[0]);
+        assertEquals(1, saved.getTags().length);
+    }
+
+    @Test
+    void rejectsCreateWhenPetIsNotOwned() {
+        UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.empty());
+
+        CustomException exception = assertThrows(CustomException.class, () ->
+            reviewService.create(accountId, UUID.randomUUID(), new ReviewCreateInput(
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "좋았어요",
+                List.of(),
+                List.of()
+            )));
+
+        assertEquals(ReviewErrorCode.PET_NOT_OWNED, exception.getErrorCode());
+        verifyNoInteractions(reviewRepository);
+    }
+
+    @Test
+    void rejectsTagThatIsNotInTheConfiguredList() {
+        UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+
+        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.of(
+            new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
+        ));
+        when(reviewTagProvider.findAll()).thenReturn(List.of("주차 편함"));
+
+        CustomException exception = assertThrows(CustomException.class, () ->
+            reviewService.create(accountId, UUID.randomUUID(), new ReviewCreateInput(
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "좋았어요",
+                List.of(),
+                List.of("없는 태그")
+            )));
+
+        assertEquals(CommonErrorCode.VALIDATION_FAILED, exception.getErrorCode());
+        verifyNoInteractions(reviewRepository);
+    }
+
+    @Test
+    void rejectsPhotoUrlThatIsNotOwned() {
+        UUID accountId = UUID.randomUUID();
+        UUID petId = UUID.randomUUID();
+        String photoUrl = "https://review-images.s3.ap-northeast-2.amazonaws.com/reviews/"
+            + UUID.randomUUID() + "/photo.jpg";
+
+        when(petProvider.findOwnedPet(accountId, petId)).thenReturn(Optional.of(
+            new PetSnapshot("골든리트리버", new BigDecimal("28.5"), "LARGE")
+        ));
+        when(reviewTagProvider.findAll()).thenReturn(List.of("주차 편함"));
+        when(storageProvider.extractOwnedKey(photoUrl, accountId)).thenReturn(Optional.empty());
+
+        CustomException exception = assertThrows(CustomException.class, () ->
+            reviewService.create(accountId, UUID.randomUUID(), new ReviewCreateInput(
+                petId,
+                LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "좋았어요",
+                List.of(photoUrl),
+                List.of("주차 편함")
+            )));
+
+        assertEquals(CommonErrorCode.VALIDATION_FAILED, exception.getErrorCode());
+        verifyNoInteractions(reviewRepository);
     }
 }

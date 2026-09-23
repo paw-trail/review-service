@@ -5,15 +5,19 @@ import com.pawtrail.common.response.PageResponse;
 import com.pawtrail.common.security.annotation.CurrentUser;
 import com.pawtrail.common.security.principal.CustomUserPrincipal;
 import com.pawtrail.review.application.dto.output.MyReviewOutput;
+import com.pawtrail.review.application.dto.output.ReviewCreatedOutput;
 import com.pawtrail.review.application.dto.output.PlaceReviewListOutput;
 import com.pawtrail.review.application.dto.output.UploadUrlOutput;
 import com.pawtrail.review.application.service.ReviewService;
+import com.pawtrail.review.presentation.request.CreateReviewRequest;
 import com.pawtrail.review.presentation.request.UploadUrlRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -53,6 +57,22 @@ public class ReviewController {
             page,
             size
         ));
+    }
+
+    @PostMapping("/places/{placeId}/reviews")
+    public ResponseEntity<CommonApiResponse<ReviewCreatedOutput>> create(
+        @PathVariable UUID placeId,
+        @CurrentUser CustomUserPrincipal principal,
+        @Valid @RequestBody CreateReviewRequest request
+    ) {
+        ReviewCreatedOutput output = reviewService.create(
+            principal.accountId(),
+            placeId,
+            request.toInput()
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+            .body(CommonApiResponse.success(output));
     }
 
     @GetMapping("/reviews/me")
