@@ -9,6 +9,7 @@ import com.pawtrail.review.domain.provider.UserProvider;
 import com.pawtrail.review.domain.provider.dto.PetSnapshot;
 import com.pawtrail.review.domain.provider.dto.PlaceSummary;
 import com.pawtrail.review.domain.provider.dto.UserSummary;
+import com.pawtrail.review.application.service.AccountWithdrawnService;
 import com.pawtrail.review.domain.repository.PlaceReviewRepository;
 import com.pawtrail.review.infrastructure.config.ReviewProperties;
 import com.pawtrail.review.infrastructure.persistence.jpa.PlaceReviewJpaRepository;
@@ -36,6 +37,7 @@ import java.util.stream.IntStream;
 
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -65,6 +67,9 @@ class ReviewApplicationTests {
 
     @Autowired
     private PlaceReviewRepository placeReviewRepository;
+
+    @Autowired
+    private AccountWithdrawnService accountWithdrawnService;
 
     @Autowired
     private ReviewLikeJpaRepository reviewLikeJpaRepository;
@@ -815,5 +820,109 @@ class ReviewApplicationTests {
 
         assertThat(placeReviewJpaRepository.findById(review.getId()).orElseThrow().isDeleted())
             .isFalse();
+    }
+
+    @Test
+    void internalCountAndStatsAndPeriodAnswerTheCallers() throws Exception {
+        UUID placeId = UUID.randomUUID();
+        UUID otherPlaceId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+
+        placeReviewJpaRepository.saveAllAndFlush(List.of(
+            PlaceReview.create(
+                placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+                (short) 5, (short) 4, (short) 5, (short) 4,
+                "첫 번째", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            ),
+            PlaceReview.create(
+                placeId, accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 12),
+                (short) 4, (short) 4, (short) 4, (short) 4,
+                "두 번째", List.of(), List.of(),
+                "골든리트리버", new BigDecimal("28.5"), "LARGE"
+            )
+        ));
+
+        mockMvc.perform(get("/internal/reviews/count")
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .queryParam("accountId", accountId.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.count").value(2));
+
+        // 평점은 계정을 안 보므로 헤더 없이도 답합니다. 후기 없는 장소는 빠집니다.
+        mockMvc.perform(get("/internal/reviews/stats")
+                .queryParam("placeIds", placeId + "," + otherPlaceId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].placeId").value(placeId.toString()))
+            .andExpect(jsonPath("$.data[0].ratingAvg").value(4.5))
+            .andExpect(jsonPath("$.data[0].reviewCount").value(2));
+
+        // 기간은 방문일 기준이고 양끝을 포함합니다.
+        mockMvc.perform(get("/internal/reviews")
+                .header("X-User-Id", accountId)
+                .header("X-User-Role", "USER")
+                .queryParam("accountId", accountId.toString())
+                .queryParam("from", "2026-09-10")
+                .queryParam("to", "2026-09-10"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.length()").value(1))
+            .andExpect(jsonPath("$.data[0].content").value("첫 번째"))
+            .andExpect(jsonPath("$.data[0].visitedAt").value("2026-09-10"))
+            .andExpect(jsonPath("$.data[0].petBreedAtVisit").value("골든리트리버"));
+    }
+
+    // 망 안이라고 남의 계정을 물을 수 있는 것은 아닙니다.
+    @Test
+    void internalRejectsAnotherAccount() throws Exception {
+        mockMvc.perform(get("/internal/reviews/count")
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER")
+                .queryParam("accountId", UUID.randomUUID().toString()))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        mockMvc.perform(get("/internal/reviews/count")
+                .queryParam("accountId", UUID.randomUUID().toString()))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.code").value("AUTHENTICATION_FAILED"));
+    }
+
+    // 탈퇴는 행을 남기지 않습니다. 좋아요도 양쪽 다 사라집니다.
+    @Test
+    void withdrawRemovesReviewsAndLikesOnBothSides() {
+        UUID accountId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        String key = "reviews/" + accountId + "/photo.jpg";
+
+        PlaceReview mine = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), accountId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "내 후기", List.of(key), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+        PlaceReview others = placeReviewJpaRepository.saveAndFlush(PlaceReview.create(
+            UUID.randomUUID(), otherId, UUID.randomUUID(), LocalDate.of(2026, 9, 10),
+            (short) 5, (short) 4, (short) 5, (short) 4,
+            "남의 후기", List.of(), List.of(),
+            "골든리트리버", new BigDecimal("28.5"), "LARGE"
+        ));
+
+        // 남이 내 후기에 누른 좋아요와, 내가 남의 후기에 누른 좋아요
+        reviewLikeJpaRepository.saveAllAndFlush(List.of(
+            ReviewLike.create(mine.getId(), otherId),
+            ReviewLike.create(others.getId(), accountId)
+        ));
+
+        accountWithdrawnService.withdraw(accountId);
+
+        assertThat(placeReviewJpaRepository.findById(mine.getId())).isEmpty();
+        assertThat(reviewLikeJpaRepository.count()).isZero();
+        verify(storageProvider).delete(key);
+
+        // 남의 후기는 남고 좋아요 수만 줄어듭니다.
+        assertThat(placeReviewJpaRepository.findById(others.getId()).orElseThrow().getLikeCount())
+            .isZero();
     }
 }
