@@ -208,7 +208,9 @@ class ReviewApplicationTests {
 
         assertThat(reviewProperties.tags()).containsExactlyElementsOf(expectedTags);
 
-        mockMvc.perform(get("/api/v1/reviews/tags"))
+        mockMvc.perform(get("/api/v1/reviews/tags")
+                .header("X-User-Id", UUID.randomUUID())
+                .header("X-User-Role", "USER"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.length()").value(expectedTags.size()))
